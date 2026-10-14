@@ -1,0 +1,10 @@
+# Host row via the subpath export, Client row via the bare package name: two
+# distinct specifiers, so the Host entry is applied once and the Client entry
+# is recognized as the browser half.
+- insert:
+    - id: mdc-memory
+      name: '@local/mdc-memory/host'
+      config:
+        dataDir: !!js dshHomePath('memory')
+    - id: mdc-memory-ui
+      name: '@local/mdc-memory'

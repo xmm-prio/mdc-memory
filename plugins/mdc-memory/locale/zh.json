@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Memory",
+    "description": "为 agent 提供长期记忆，由本机托管的 basic-memory 进程支撑。"
+  }
+}

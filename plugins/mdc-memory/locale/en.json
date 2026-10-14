@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Memory",
+    "description": "Long-term memory for agents, backed by a basic-memory process managed on this machine."
+  }
+}
