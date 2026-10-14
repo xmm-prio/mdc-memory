@@ -4,14 +4,15 @@
  * one dataDir, the way successive dsh runs share ~/.dsh/memory.
  */
 import assert from 'node:assert/strict';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { createFakeCtx, serveRoutes } from './support/fake-ctx.js';
 import { createFakeSubprocess } from './support/fake-subprocess.js';
+import { makeSource, writeTree } from './support/python-source.js';
 
 const BUNDLE = fileURLToPath(new URL('..', import.meta.url));
 
@@ -22,23 +23,6 @@ beforeEach(() => {
 });
 
 afterEach(() => rmSync(workdir, { recursive: true, force: true }));
-
-function writeTree(root, files) {
-  for (const [path, content] of Object.entries(files)) {
-    mkdirSync(dirname(join(root, path)), { recursive: true });
-    writeFileSync(join(root, path), content);
-  }
-  return root;
-}
-
-/** A basic-memory source tree as tools/pack stages it. */
-function makeSource(root) {
-  return writeTree(root, {
-    'pyproject.toml': '[project]\nname = "basic-memory"\n',
-    'uv.lock': 'version = 1\n',
-    'src/basic_memory/__init__.py': '__version__ = "0.23.2"\n',
-  });
-}
 
 /**
  * A copy of the Host row laid out like an installed tarball: the package
@@ -156,4 +140,33 @@ test('bytecode caches and tool directories in a checkout do not count as source 
 
   assert.equal(status.state, 'ready', JSON.stringify(status));
   assert.deepEqual(subprocess.spawned.map((proc) => proc.program), ['model', 'serve']);
+});
+
+test('edits outside the build inputs of a checkout, such as its tests, do not rebuild the venv', async () => {
+  const checkout = makeSource(join(workdir, 'basic-memory'));
+  const { apply } = await installBundle({ packaged: false });
+  await startOnce(apply, { pythonSource: checkout });
+  writeTree(checkout, {
+    'tests/test_search.py': 'def test_search(): ...\n',
+    'docs/search.md': '# search\n',
+    'integrations/hermes/plugin.py': '# not force-included\n',
+  });
+
+  const { status, subprocess } = await startOnce(apply, { pythonSource: checkout });
+
+  assert.equal(status.state, 'ready', JSON.stringify(status));
+  assert.deepEqual(subprocess.spawned.map((proc) => proc.program), ['model', 'serve']);
+});
+
+test('a source tree missing a build input fails open and names what is missing', async () => {
+  const checkout = makeSource(join(workdir, 'basic-memory'));
+  rmSync(join(checkout, 'src'), { recursive: true });
+  const { apply } = await installBundle({ packaged: false });
+
+  const { status, subprocess } = await startOnce(apply, { pythonSource: checkout });
+
+  assert.equal(status.state, 'error');
+  assert.equal(status.error.stage, 'source');
+  assert.match(status.error.message, /not a basic-memory source tree \(missing src\)/);
+  assert.equal(subprocess.spawned.length, 0);
 });

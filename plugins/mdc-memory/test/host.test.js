@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
@@ -8,6 +8,7 @@ import { apply } from '../host/index.js';
 import { memoryScopes } from './support/agent-plane.js';
 import { createFakeCtx, serveRoutes } from './support/fake-ctx.js';
 import { basicMemoryServer, createFakeSubprocess, createGate } from './support/fake-subprocess.js';
+import { makeSource } from './support/python-source.js';
 
 let workdir;
 let cleanups;
@@ -22,13 +23,7 @@ afterEach(async () => {
   rmSync(workdir, { recursive: true, force: true });
 });
 
-/** A directory that looks like a basic-memory checkout. */
-function makeSource(path = join(workdir, 'basic-memory')) {
-  mkdirSync(path, { recursive: true });
-  writeFileSync(join(path, 'pyproject.toml'), '[project]\nname = "basic-memory"\n');
-  writeFileSync(join(path, 'uv.lock'), '');
-  return path;
-}
+const sourceDir = () => join(workdir, 'basic-memory');
 
 /**
  * Apply the Host plugin against a fake ctx and serve its routes.
@@ -70,7 +65,7 @@ const isInside = (path, dir) => path.startsWith(dir + (dir.includes('\\') ? '\\'
 test('status reports preparing while the environment is being built', async () => {
   const gate = createGate();
   const subprocess = createFakeSubprocess({ uvSync: async () => { await gate.opened; return 0; } });
-  const { http } = await start(subprocess, { pythonSource: makeSource() });
+  const { http } = await start(subprocess, { pythonSource: makeSource(sourceDir()) });
 
   const { status, body } = await http.request('GET', '/mdc-memory/status');
 
@@ -88,7 +83,7 @@ test('status shows the running stage and its latest output line', async () => {
       return 0;
     },
   });
-  const { http } = await start(subprocess, { pythonSource: makeSource() });
+  const { http } = await start(subprocess, { pythonSource: makeSource(sourceDir()) });
 
   let body;
   await until(async () => {
@@ -107,14 +102,14 @@ test('status shows the running stage and its latest output line', async () => {
 });
 
 test('runtime routes reject unauthenticated requests', async () => {
-  const { http } = await start(createFakeSubprocess(), { pythonSource: makeSource() });
+  const { http } = await start(createFakeSubprocess(), { pythonSource: makeSource(sourceDir()) });
 
   assert.equal((await http.request('GET', '/mdc-memory/status', { auth: false })).status, 401);
   assert.equal((await http.request('POST', '/mdc-memory/retry', { body: {}, auth: false })).status, 401);
 });
 
 test('knowledge base routes reject unauthenticated requests', async () => {
-  const { http } = await start(createFakeSubprocess(), { pythonSource: makeSource() });
+  const { http } = await start(createFakeSubprocess(), { pythonSource: makeSource(sourceDir()) });
 
   assert.equal((await http.request('GET', '/mdc-memory/kbs', { auth: false })).status, 401);
   for (const path of ['/mdc-memory/kbs/add', '/mdc-memory/kbs/delete', '/mdc-memory/kbs/set-enabled']) {
@@ -125,7 +120,7 @@ test('knowledge base routes reject unauthenticated requests', async () => {
 test('knowledge base routes answer 503 until basic-memory is ready', async () => {
   const gate = createGate();
   const subprocess = createFakeSubprocess({ uvSync: async () => { await gate.opened; return 0; } });
-  const { http } = await start(subprocess, { pythonSource: makeSource() });
+  const { http } = await start(subprocess, { pythonSource: makeSource(sourceDir()) });
 
   const listed = await http.request('GET', '/mdc-memory/kbs');
   const added = await http.request('POST', '/mdc-memory/kbs/add', { body: { name: 'kb', path: join(workdir, 'kb') } });
@@ -137,7 +132,7 @@ test('knowledge base routes answer 503 until basic-memory is ready', async () =>
 
 test('becomes ready with basic-memory on loopback, isolated inside dataDir', async () => {
   const subprocess = createFakeSubprocess();
-  const source = makeSource();
+  const source = makeSource(sourceDir());
   const dataDir = join(workdir, 'memory');
   const { http } = await start(subprocess, { pythonSource: source, dataDir });
 
@@ -173,7 +168,7 @@ test('becomes ready with basic-memory on loopback, isolated inside dataDir', asy
 
 test('basic-memory segments Chinese text with jieba by default', async () => {
   const subprocess = createFakeSubprocess();
-  const { http } = await start(subprocess, { pythonSource: makeSource() });
+  const { http } = await start(subprocess, { pythonSource: makeSource(sourceDir()) });
 
   await waitForState(http, 'ready');
 
@@ -185,7 +180,7 @@ test('basic-memory segments Chinese text with jieba by default', async () => {
 test('the segmentation strategy and user dictionary come from the config', async () => {
   const userDict = join(workdir, 'terms.txt');
   const subprocess = createFakeSubprocess();
-  const { http } = await start(subprocess, { pythonSource: makeSource(), segmentation: 'ngram', segmentationUserDict: userDict });
+  const { http } = await start(subprocess, { pythonSource: makeSource(sourceDir()), segmentation: 'ngram', segmentationUserDict: userDict });
 
   await waitForState(http, 'ready');
 
@@ -215,7 +210,7 @@ test('rejects a memory tool whitelist that is not a list of tool names', () => {
 test('main agents are offered no memory tools, section or lesson skill while basic-memory is preparing', async () => {
   const gate = createGate();
   const subprocess = createFakeSubprocess({ uvSync: async () => { await gate.opened; return 0; } });
-  const { fake } = await start(subprocess, { pythonSource: makeSource() });
+  const { fake } = await start(subprocess, { pythonSource: makeSource(sourceDir()) });
 
   const agent = await fake.agents.create();
 
@@ -226,7 +221,7 @@ test('main agents are offered no memory tools, section or lesson skill while bas
 });
 
 test('main agents are offered no memory tools, section or lesson skill while no knowledge base exists', async () => {
-  const { fake, http } = await start(createFakeSubprocess(), { pythonSource: makeSource() });
+  const { fake, http } = await start(createFakeSubprocess(), { pythonSource: makeSource(sourceDir()) });
   await waitForState(http, 'ready');
 
   const agent = await fake.agents.create();
@@ -249,7 +244,7 @@ async function startWithKnowledgeBase(options) {
     inputSchema: { type: 'object', properties: { query: { type: 'string' }, project: { type: 'string' } } },
   };
   const subprocess = createFakeSubprocess({ serve: basicMemoryServer({ projects: [knowledgeBase], tools: [searchNotes] }) });
-  const started = await start(subprocess, { pythonSource: makeSource() }, options);
+  const started = await start(subprocess, { pythonSource: makeSource(sourceDir()) }, options);
   await waitForState(started.http, 'ready');
   return started;
 }
@@ -361,7 +356,7 @@ test('proxy bypass lists reach Python children in a form httpx can parse', async
   const inherited = 'localhost,127.0.0.1,.corp.example ::1,[::1],[fe80::1],[::1]:8080,LOCALHOST,*.svc';
   setEnv({ NO_PROXY: inherited, no_proxy: inherited });
   const subprocess = createFakeSubprocess();
-  const { http } = await start(subprocess, { pythonSource: makeSource() });
+  const { http } = await start(subprocess, { pythonSource: makeSource(sourceDir()) });
 
   await waitForState(http, 'ready');
 
@@ -375,7 +370,7 @@ test('proxy bypass lists reach Python children in a form httpx can parse', async
 test('Python children get no proxy bypass list when none is inherited', async () => {
   setEnv({ NO_PROXY: undefined, no_proxy: undefined });
   const subprocess = createFakeSubprocess();
-  const { http } = await start(subprocess, { pythonSource: makeSource() });
+  const { http } = await start(subprocess, { pythonSource: makeSource(sourceDir()) });
 
   await waitForState(http, 'ready');
 
@@ -389,7 +384,7 @@ test('dataDir falls back to dshHomePath("memory") when a user patch replaces the
   const fake = createFakeCtx({ subprocess, dshHomePath: (...segments) => join(dshHome, ...segments) });
   cleanups.push(() => fake.dispose());
 
-  apply(fake.ctx, { pythonSource: makeSource() });
+  apply(fake.ctx, { pythonSource: makeSource(sourceDir()) });
   await until(() => subprocess.last('uvSync'));
 
   assert.ok(isInside(subprocess.last('uvSync').spec.env.UV_PROJECT_ENVIRONMENT, join(dshHome, 'memory')));
@@ -416,7 +411,7 @@ test('a failing uv sync reports its exit code and output', async () => {
       return 2;
     },
   });
-  const { http } = await start(subprocess, { pythonSource: makeSource() });
+  const { http } = await start(subprocess, { pythonSource: makeSource(sourceDir()) });
 
   const failed = await waitForState(http, 'error');
 
@@ -426,7 +421,7 @@ test('a failing uv sync reports its exit code and output', async () => {
 });
 
 test('retry after an error reruns the pipeline to ready', async () => {
-  const source = join(workdir, 'basic-memory');
+  const source = sourceDir();
   const { http } = await start(createFakeSubprocess(), { pythonSource: source });
   await waitForState(http, 'error');
   makeSource(source);
@@ -440,7 +435,7 @@ test('retry after an error reruns the pipeline to ready', async () => {
 });
 
 test('retry is refused unless the runtime is in the error state', async () => {
-  const { http } = await start(createFakeSubprocess(), { pythonSource: makeSource() });
+  const { http } = await start(createFakeSubprocess(), { pythonSource: makeSource(sourceDir()) });
   await waitForState(http, 'ready');
 
   const retried = await http.request('POST', '/mdc-memory/retry', { body: {} });
@@ -451,7 +446,7 @@ test('retry is refused unless the runtime is in the error state', async () => {
 
 test('basic-memory exiting after ready turns the status into an error', async () => {
   const subprocess = createFakeSubprocess();
-  const { http } = await start(subprocess, { pythonSource: makeSource() });
+  const { http } = await start(subprocess, { pythonSource: makeSource(sourceDir()) });
   await waitForState(http, 'ready');
 
   subprocess.last('serve').crash(3);
@@ -464,7 +459,7 @@ test('basic-memory exiting after ready turns the status into an error', async ()
 
 test('disposing the plugin terminates basic-memory', async () => {
   const subprocess = createFakeSubprocess();
-  const { fake, http } = await start(subprocess, { pythonSource: makeSource() });
+  const { fake, http } = await start(subprocess, { pythonSource: makeSource(sourceDir()) });
   const { endpoint } = await waitForState(http, 'ready');
 
   await fake.dispose();
@@ -476,7 +471,7 @@ test('disposing the plugin terminates basic-memory', async () => {
 test('disposing during preparation terminates the running command and stops the pipeline', async () => {
   const held = createGate();
   const subprocess = createFakeSubprocess({ uvSync: async () => { await held.opened; return 0; } });
-  const { fake } = await start(subprocess, { pythonSource: makeSource() });
+  const { fake } = await start(subprocess, { pythonSource: makeSource(sourceDir()) });
   await until(() => subprocess.last('uvSync'));
 
   await fake.dispose();

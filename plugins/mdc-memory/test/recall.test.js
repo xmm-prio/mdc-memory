@@ -1,11 +1,11 @@
 /**
- * User-message recall (鍙洖) through `apply(ctx, config)` with fake dsh
+ * User-message recall (召回) through `apply(ctx, config)` with fake dsh
  * services: the recall settings API and the behaviors that need no search
  * results. Search behavior runs against a real basic-memory in
  * real-recall.test.js.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
@@ -14,6 +14,7 @@ import { apply } from '../host/index.js';
 import { createFakeCtx, serveRoutes } from './support/fake-ctx.js';
 import { createFakeStorageDomain } from './support/fake-storage-domain.js';
 import { createFakeSubprocess, createGate } from './support/fake-subprocess.js';
+import { makeSource } from './support/python-source.js';
 
 let workdir;
 let cleanups;
@@ -28,18 +29,10 @@ afterEach(async () => {
   rmSync(workdir, { recursive: true, force: true });
 });
 
-function makeSource() {
-  const path = join(workdir, 'basic-memory');
-  mkdirSync(path, { recursive: true });
-  writeFileSync(join(path, 'pyproject.toml'), '[project]\nname = "basic-memory"\n');
-  writeFileSync(join(path, 'uv.lock'), '');
-  return path;
-}
-
 /** Apply the Host plugin against a fake ctx and serve its routes. */
 async function start({ subprocess = createFakeSubprocess(), storageDomain } = {}) {
   const fake = createFakeCtx({ subprocess, ...(storageDomain ? { storageDomain } : {}) });
-  apply(fake.ctx, { dataDir: join(workdir, 'memory'), pythonSource: makeSource() });
+  apply(fake.ctx, { dataDir: join(workdir, 'memory'), pythonSource: makeSource(join(workdir, 'basic-memory')) });
   const http = await serveRoutes(fake.routes);
   const stop = async () => {
     await http.close();

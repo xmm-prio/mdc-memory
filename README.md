@@ -64,7 +64,7 @@
 3. 再次安装同一个 tarball：`dsh plugin --profile web add <tarball 绝对路径>`。
 4. 重启 dsh。
 
-插件每次启动都会对 bundle 内的 basic-memory 源码计算内容哈希，并与虚拟环境记录的哈希比较。源码有变化时，“准备 Python 环境”一步会自动重建虚拟环境中的 basic-memory；没有变化则直接复用。知识库、配置和索引都不受升级影响。
+插件每次启动都会对 bundle 内 basic-memory 的构建输入计算内容哈希，并与虚拟环境记录的哈希比较。源码有变化时，“准备 Python 环境”一步会自动重建虚拟环境中的 basic-memory；没有变化则直接复用。知识库、配置和索引都不受升级影响。
 
 如果重启后 Memory 区域没有出现重建，说明 dsh 仍在加载旧版本：先执行下面的卸载命令，再重新 add，然后重启。
 
@@ -91,7 +91,7 @@ dsh plugin --profile web remove @local/mdc-memory
     pythonSource: C:\path\to\mdc-memory\vendor\basic-memory
 ```
 
-重启 dsh 后，插件从 submodule 建立虚拟环境。之后每次启动都会对 submodule 计算内容哈希（忽略 `.venv`、`.pytest_cache` 等隐藏目录以及 `__pycache__`、`node_modules`），改了代码或切换了提交，下次启动时就会自动重建虚拟环境中的 basic-memory。
+重启 dsh 后，插件从 submodule 建立虚拟环境。之后每次启动都会对 submodule 的构建输入（`pyproject.toml`、`uv.lock`、`src/` 等，与打包进 tarball 的文件相同）计算内容哈希，改了这些文件或切换了提交，下次启动时就会自动重建虚拟环境中的 basic-memory；只改测试、文档，或 `.venv`、`__pycache__` 之类的工具目录变化，不会触发重建。
 
 说明：
 

@@ -44,7 +44,7 @@ profile 的 `cordis.patch.yml` 中覆盖配置会整体替换 `config`，未写�
 
 启动后在后台依次执行四个阶段，任一阶段失败都只把状态置为“错误”，dsh 照常运行（fail-open）：
 
-1. `source`：确认 `pythonSource` 是 basic-memory 源码目录，并对其内容计算 SHA-256 指纹（相对路径与文件内容，跳过隐藏条目、`__pycache__` 与 `node_modules`）。打包的源码没有 `.git`，版本号恒为 `0.0.0`，所以只能靠内容区分新旧源码。
+1. `source`：确认 `pythonSource` 是 basic-memory 源码目录，并对其构建输入计算 SHA-256 指纹（相对路径与文件内容）。构建输入由 `host/runtime/build-inputs.js` 定义：`pyproject.toml`、`uv.lock`、`README.md`、`LICENSE`、`src/`，以及 `pyproject.toml` 强制打包进 wheel 的路径，跳过隐藏条目、`__pycache__` 与 `node_modules`；缺少任何一项都视为不是 basic-memory 源码目录。`tools/pack` 打包的正是这些文件，所以打包的源码与它所来自的 checkout 指纹相同，开发时改测试、文档也不会触发重建。打包的源码没有 `.git`，版本号恒为 `0.0.0`，所以只能靠内容区分新旧源码。
 2. `venv`：虚拟环境位于 `<dataDir>/venv`，其中的 `mdc-memory-build.json` 记录它由哪份源码（指纹）和哪组 `uv sync` 参数建成。记录与当前一致时直接复用；否则先删除记录，执行 `python -m uv sync --python 3.12 --frozen --no-dev --no-editable --reinstall-package basic-memory`，成功后写入新记录。
    - `--no-editable`：把 basic-memory 复制进虚拟环境，不依赖 bundle 目录。
    - `--reinstall-package basic-memory`：版本号不变时 uv 会认为已安装的包是最新的，必须强制用新源码重新构建。
