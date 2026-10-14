@@ -61,12 +61,12 @@
    ```
 
 2. 重新打包：`node tools/pack/index.js`。
-3. 再次安装同一个 tarball：`dsh plugin --profile web add <tarball 绝对路径>`。
+3. 再次安装：`dsh plugin --profile web add <tarball 绝对路径>`。即使版本号没变、tarball 路径也和上次相同，重新 add 也会替换已安装的副本（已在 dsh 0.2.0-rc.2 上验证），不需要先卸载。
 4. 重启 dsh。
 
 插件每次启动都会对 bundle 内 basic-memory 的构建输入计算内容哈希，并与虚拟环境记录的哈希比较。源码有变化时，“准备 Python 环境”一步会自动重建虚拟环境中的 basic-memory；没有变化则直接复用。知识库、配置和索引都不受升级影响。
 
-如果重启后 Memory 区域没有出现重建，说明 dsh 仍在加载旧版本：先执行下面的卸载命令，再重新 add，然后重启。
+在更早的 dsh 版本上，如果重启后仍在运行旧代码，可以先执行下面的卸载命令再 add。
 
 ## 卸载
 

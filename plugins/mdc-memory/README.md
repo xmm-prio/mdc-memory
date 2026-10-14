@@ -33,7 +33,7 @@ dsh bundle：在本机托管一个 basic-memory 进程，为 agent 提供长期�
 | `python` | `python` | 用来执行 `python -m uv` 的解释器，可写 PATH 上的名字或绝对路径 |
 | `segmentation` | `jieba` | 全文检索对中文等无空格文字的切分策略：`jieba` 按词切分，`ngram` 为上游的单字加双字片段 |
 | `segmentationUserDict` | 无 | jieba 用户词典的绝对路径（UTF-8，每行 `词语 [词频] [词性]`），其中的术语作为整词切分；仅 `jieba` 策略使用 |
-| `memoryTools` | `[write_note, read_note, edit_note, search_notes, build_context, recent_activity, list_directory]` | 记忆工具白名单：暴露给主 agent 的 basic-memory MCP 工具名（字母、数字、`_`、`-`，不超过 57 个字符），按此顺序注册 |
+| `memoryTools` | `[write_note, read_note, edit_note, search_notes, build_context, recent_activity, list_directory]` | 记忆工具白名单：暴露给主 agent 的 basic-memory MCP 工具名（字母、数字、`_`、`-`，不超过 57 个字符），按此顺序注册。只能暴露在单个项目内工作（有 `project` 参数）的工具，其余的按设计不暴露（见“记忆工具”） |
 
 profile 的 `cordis.patch.yml` 中覆盖配置会整体替换 `config`，未写的字段使用上表默认值。开发时把 `pythonSource` 指向 submodule：
 
@@ -154,6 +154,10 @@ The lessons below were recalled automatically from the user's knowledge bases be
 | `minSimilarity` | `0.65` | 相似度阈值，0–1。用 `BAAI/bge-small-zh-v1.5` 实测：同一个坑的消息与经验约 0.7–0.8，无关的技术内容最高约 0.58，闲聊约 0.2–0.3；默认值取两者之间 |
 | `maxLessons` | `3` | 每条消息最多注入的经验条数，1–10 |
 
+## 已知限制
+
+- DeepSeek-V41-Flash 的工具更新方式是只增不减（`toolUpdate: "addition-only"`）。在同一个会话里先关闭所有知识库、再重新开启其中一个时，模型认不出重新加入的记忆工具（lesson 技能和记忆提示词会正常回来）。重新开启知识库后请新建会话。
+
 ## HTTP 接口
 
 都需要 dsh 的浏览器登录凭据。失败时返回 `{ code, message, details? }`。
@@ -193,11 +197,11 @@ npm test
 测试文件串行执行（`--test-concurrency=1`），因为各个真实进程测试共用同一个 `dataDir`。真实进程测试默认跳过，设置 `MDC_MEMORY_REAL_TEST=1` 后运行：
 
 - `test/real-basic-memory.test.js`：用 submodule 源码和 dsh 自带的子进程服务把 basic-memory 拉到就绪再关闭。
-- `test/real-knowledge-base.test.js`：在真实 basic-memory 和 dsh 自带的存储服务上验证知识库的列表、添加、校验、schema 生成、检索、开关、删除和重启后保持。
-- `test/real-memory-tools.test.js`：在真实 basic-memory 前面挂上 dsh 自带的工具注册表与系统提示词服务，验证主 agent 与子 agent 看到的工具和提示词、白名单、`project` 补全与拒绝、开关即时生效，以及插件卸载后撤下。
+- `test/real-knowledge-base.test.js`：在真实 basic-memory 和 dsh 自带的存储服务上验证知识库的列表、添加、校验、schema 生成（索引中已有经验 schema 时跳过）、检索、开关、删除和重启后保持。
+- `test/real-memory-tools.test.js`：在真实 basic-memory 前面挂上 dsh 自带的工具注册表与系统提示词服务，验证主 agent 与子 agent 看到的工具和提示词、白名单、`project` 补全与拒绝、开关即时生效、插件卸载后撤下，以及自然语言的中文问句只靠关键词检索（`search_type: text`）就能找到与它共享关键词的笔记。
 - `test/real-lesson-skill.test.js`：通过 dsh 自带的技能注册表验证主 agent 能发现并读取 lesson 技能（且只有它）、子 agent 看不到、随最后一个知识库开关撤下和恢复；再按顺序执行技能中的示例调用（先检索、新建、再次检索后原地更新、取代、标记过时），用 basic-memory 的 `schema_validate` 确认经验没有告警，并检查 `supersedes` 关系已解析到旧经验。
 - `test/real-recall.test.js`：通过 basic-memory 的 REST 写入测试经验和参考笔记，验证召回的注入内容、过时/被取代经验与参考笔记的排除、跨知识库合并排序与来源标注、阈值/条数/开关、会话内去重、围栏与转义、无命中/无生效知识库/子 agent 不注入。
 
-假 ctx 带有一个 agent 平面（`test/support/agent-plane.js`）：测试通过它创建、销毁主 agent 和子 agent，查看每个 agent 实际拿到的工具 schema、系统提示词、技能和工具调用结果，并给 agent 发用户消息（`fake.agents.sendUserMessage`）：消息经过 `agent/pre-step` waterfall（也可用 `fake.waterfall` 直接驱动），进入 step 的消息写成会话的 `user/message` 事件，供会话投影折叠。事件分发按 agent 作用域过滤：agent 自己上下文上的监听只收到关于它的事件。agent 上下文与 dsh 的 agent 循环铸造的一致：只能读到 `AgentLoop.inject` 中的服务，读其他服务会像 Cordis 一样抛出 `cannot get property "<name>" without inject`，其他服务只能经 `agent.ctx.inject([...], callback)` 获得。快速测试用内存实现，真实进程测试换成 dsh 自带的 `dsh-tools`、`dsh-system-prompt`、`dsh-skill` 与 `dsh-scope`，agent 上下文从声明了真实 `AgentLoop.inject`（取本测试组合提供的部分）的上下文铸造；dsh 遇到未处理的 Promise 拒绝会退出，所以真实进程测试在关闭时如有未处理的拒绝就报错。快速测试中的 basic-memory 由 `test/support/fake-subprocess.js` 模拟，`basicMemoryServer` 可以让它持有知识库并提供 MCP 工具列表。
+假 ctx 带有一个 agent 平面（`test/support/agent-plane.js`）：测试通过它创建、销毁主 agent 和子 agent，查看每个 agent 实际拿到的工具 schema、系统提示词、技能和工具调用结果，并给 agent 发用户消息（`fake.agents.sendUserMessage`）：消息经过 `agent/pre-step` waterfall（也可用 `fake.waterfall` 直接驱动），进入 step 的消息写成会话的 `user/message` 事件，供会话投影折叠。事件分发按 agent 作用域过滤：agent 自己上下文上的监听只收到关于它的事件。agent 上下文与 dsh 的 agent 循环铸造的一致：只能读到 `AgentLoop.inject` 中的服务，读其他服务会像 Cordis 一样抛出 `cannot get property "<name>" without inject`，其他服务只能经 `agent.ctx.inject([...], callback)` 获得。快速测试用内存实现，真实进程测试换成 dsh 自带的 `dsh-tools`、`dsh-system-prompt`、`dsh-skill` 与 `dsh-scope`，agent 上下文从声明了真实 `AgentLoop.inject`（取本测试组合提供的部分）的上下文铸造；dsh 遇到未处理的 Promise 拒绝会退出，所以真实进程测试在关闭时如有未处理的拒绝就报错。快速测试中的 basic-memory 由 `test/support/fake-subprocess.js` 模拟，`basicMemoryServer` 可以让它持有知识库、提供 MCP 工具列表并按查询返回检索结果。测试共用的源码目录、知识库准备等辅助函数在 `test/support/` 下。
 
 可选环境变量见 `test/support/real-dsh.js` 文件头。
