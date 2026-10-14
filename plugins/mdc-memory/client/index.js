@@ -24,11 +24,8 @@ window.__ModuleLoader__.load({
     const RECALL_PATH = 'mdc-memory/recall-settings';
     const RECALL_UPDATE_PATH = 'mdc-memory/recall-settings/update';
     const POLL_MS = 2000;
-    /** Threshold choices 0.00-1.00 in steps of 0.05; integer arithmetic keeps each value equal to its literal. */
-    const THRESHOLD_STEPS = Array.from({ length: 21 }, (_, index) => (index * 5) / 100);
-    const MAX_LESSONS = 10;
-    /** Error codes of the Host API that have their own message. */
-    const KNOWN_ERRORS = new Set(['invalid-request', 'path-not-absolute', 'name-taken', 'name-reserved', 'path-registered', 'path-reserved', 'not-found', 'rejected', 'unavailable']);
+    /** Dictionary keys `error_<code>` hold the message of a Host API error code. */
+    const ERROR_KEY = 'error_';
 
     const zh = {
       nav: 'Memory',
@@ -80,7 +77,7 @@ window.__ModuleLoader__.load({
       'error_not-found': '知识库“{knowledgeBase}”不存在，可能已被删除。',
       error_rejected: 'basic-memory 拒绝了该操作：{message}',
       error_unavailable: 'basic-memory 尚未就绪，请稍后再试。',
-      error_generic: '操作失败：{message}',
+      errorGeneric: '操作失败：{message}',
       recallTitle: '召回',
       recallIntro: '每次给主 agent 发消息时，从生效知识库中检索与消息相关的经验，作为参考资料提供给 agent。子 agent 不召回；同一会话中每条经验只提供一次。修改后对下一条消息生效。',
       recallLoading: '正在读取召回配置…',
@@ -141,7 +138,7 @@ window.__ModuleLoader__.load({
       'error_not-found': 'Knowledge base "{knowledgeBase}" does not exist; it may have been deleted.',
       error_rejected: 'basic-memory refused: {message}',
       error_unavailable: 'basic-memory is not ready yet; try again shortly.',
-      error_generic: 'The operation failed: {message}',
+      errorGeneric: 'The operation failed: {message}',
       recallTitle: 'Recall',
       recallIntro: 'Each message you send to a main agent is used to look up related lessons in the effective knowledge bases, which the agent receives as reference material. Subagents get no recall, and a lesson is provided once per session. Changes apply to the next message.',
       recallLoading: 'Loading recall settings…',
@@ -237,9 +234,12 @@ window.__ModuleLoader__.load({
       return request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
     }
 
+    /** Host API error codes with their own message, read off the dictionary keys. */
+    const KNOWN_ERRORS = new Set(Object.keys(zh).filter((key) => key.startsWith(ERROR_KEY)).map((key) => key.slice(ERROR_KEY.length)));
+
     function describeError(t, error) {
-      if (KNOWN_ERRORS.has(error.code)) return t(`error_${error.code}`, { ...error.details, message: error.message });
-      return t('error_generic', { message: error.message });
+      if (KNOWN_ERRORS.has(error.code)) return t(`${ERROR_KEY}${error.code}`, { ...error.details, message: error.message });
+      return t('errorGeneric', { message: error.message });
     }
 
     /** Poll the runtime status while the section is mounted. */
@@ -476,14 +476,17 @@ window.__ModuleLoader__.load({
         }));
     }
 
-    /** The recall settings; each change is saved at once and the Host's answer replaces the shown values. */
+    /**
+     * The recall settings and their limits, as the Host answers them; each
+     * change is saved at once and the Host's answer replaces the shown values.
+     */
     function useRecallSettings() {
-      const [settings, setSettings] = useState();
+      const [recall, setRecall] = useState();
       const [error, setError] = useState();
       const [saving, setSaving] = useState(false);
       useEffect(() => {
         let cancelled = false;
-        request(RECALL_PATH).then((loaded) => !cancelled && setSettings(loaded), (failure) => !cancelled && setError(failure));
+        request(RECALL_PATH).then((loaded) => !cancelled && setRecall(loaded), (failure) => !cancelled && setError(failure));
         return () => {
           cancelled = true;
         };
@@ -491,7 +494,7 @@ window.__ModuleLoader__.load({
       const save = useCallback(async (change) => {
         setSaving(true);
         try {
-          setSettings(await post(RECALL_UPDATE_PATH, change));
+          setRecall(await post(RECALL_UPDATE_PATH, change));
           setError(undefined);
         } catch (failure) {
           setError(failure);
@@ -499,7 +502,18 @@ window.__ModuleLoader__.load({
           setSaving(false);
         }
       }, []);
-      return { settings, error, saving, save };
+      return { recall, error, saving, save };
+    }
+
+    /** Thresholds within the limits in steps of 0.05, plus the current one; integer hundredths keep each value equal to its literal. */
+    function thresholdChoices({ min, max }, current) {
+      const choices = [];
+      for (let hundredths = Math.round(min * 100); hundredths <= Math.round(max * 100); hundredths += 5) choices.push(hundredths / 100);
+      return choices.includes(current) ? choices : [...choices, current].sort((a, b) => a - b);
+    }
+
+    function countChoices({ min, max }) {
+      return Array.from({ length: max - min + 1 }, (_, index) => min + index);
     }
 
     function SettingRow({ name, hint, htmlFor, children }) {
@@ -511,13 +525,14 @@ window.__ModuleLoader__.load({
     }
 
     function RecallCard({ t }) {
-      const { settings, error, saving, save } = useRecallSettings();
+      const { recall, error, saving, save } = useRecallSettings();
       const thresholdId = useId();
       const countId = useId();
       let body;
-      if (settings === undefined) body = !error && h('div', { className: 'mdcm-muted' }, t('recallLoading'));
+      if (recall === undefined) body = !error && h('div', { className: 'mdcm-muted' }, t('recallLoading'));
       else {
-        const thresholds = THRESHOLD_STEPS.includes(settings.minSimilarity) ? THRESHOLD_STEPS : [...THRESHOLD_STEPS, settings.minSimilarity].sort((a, b) => a - b);
+        const { settings, limits } = recall;
+        const thresholds = thresholdChoices(limits.minSimilarity, settings.minSimilarity);
         body = h('div', { className: 'mdcm-settings' },
           h(SettingRow, { name: t('recallSwitch') },
             h(Switch, { checked: settings.onUserMessage, disabled: saving, label: t('recallSwitch'), onChange: (onUserMessage) => save({ onUserMessage }) })),
@@ -536,7 +551,7 @@ window.__ModuleLoader__.load({
               value: String(settings.maxLessons),
               disabled: saving,
               onChange: (event) => save({ maxLessons: Number(event.target.value) }),
-            }, Array.from({ length: MAX_LESSONS }, (_, index) => index + 1).map((count) => h('option', { key: count, value: String(count) }, String(count))))));
+            }, countChoices(limits.maxLessons).map((count) => h('option', { key: count, value: String(count) }, String(count))))));
       }
       return h('div', { className: 'mdcm-card' },
         h('h3', { className: 'mdcm-subtitle' }, t('recallTitle')),

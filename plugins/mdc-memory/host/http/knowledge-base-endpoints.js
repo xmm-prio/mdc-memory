@@ -26,19 +26,10 @@ export function knowledgeBaseEndpoints(knowledgeBases) {
   ]);
 }
 
-const STATUS_BY_CODE = Object.freeze({
-  'invalid-request': 400,
-  'path-not-absolute': 400,
-  'name-taken': 409,
-  'name-reserved': 409,
-  'path-registered': 409,
-  'path-reserved': 409,
-  'not-found': 404,
-  rejected: 400,
-});
+const STATUS_BY_KIND = Object.freeze({ invalid: 400, conflict: 409, missing: 404 });
 
 function toHttpError(error) {
-  if (error instanceof KnowledgeBaseError) return new HttpError(STATUS_BY_CODE[error.code] ?? 400, error.code, error.message, error.details);
+  if (error instanceof KnowledgeBaseError) return new HttpError(STATUS_BY_KIND[error.kind], error.code, error.message, error.details);
   if (error instanceof BasicMemoryUnavailableError) return new HttpError(503, 'unavailable', error.message);
   if (error instanceof BasicMemoryRequestError) return new HttpError(502, 'backend-error', error.message);
   return error;

@@ -20,12 +20,25 @@ import { defineSchema } from '../storage/schema.js';
  */
 export const DEFAULT_RECALL_SETTINGS = Object.freeze({ onUserMessage: true, minSimilarity: 0.65, maxLessons: 3 });
 
-export const MAX_LESSONS_LIMIT = 10;
+/** Inclusive bounds of the numeric settings; the settings UI offers values within them. */
+export const RECALL_SETTINGS_LIMITS = Object.freeze({
+  minSimilarity: Object.freeze({ min: 0, max: 1 }),
+  maxLessons: Object.freeze({ min: 1, max: 10 }),
+});
+
+const within = (value, { min, max }) => value >= min && value <= max;
+const { minSimilarity: SIMILARITY, maxLessons: LESSONS } = RECALL_SETTINGS_LIMITS;
 
 const FIELDS = Object.freeze({
   onUserMessage: { valid: (value) => typeof value === 'boolean', rule: 'must be a boolean' },
-  minSimilarity: { valid: (value) => typeof value === 'number' && value >= 0 && value <= 1, rule: 'must be a number from 0 to 1' },
-  maxLessons: { valid: (value) => Number.isInteger(value) && value >= 1 && value <= MAX_LESSONS_LIMIT, rule: `must be an integer from 1 to ${MAX_LESSONS_LIMIT}` },
+  minSimilarity: {
+    valid: (value) => typeof value === 'number' && within(value, SIMILARITY),
+    rule: `must be a number from ${SIMILARITY.min} to ${SIMILARITY.max}`,
+  },
+  maxLessons: {
+    valid: (value) => Number.isInteger(value) && within(value, LESSONS),
+    rule: `must be an integer from ${LESSONS.min} to ${LESSONS.max}`,
+  },
 });
 
 /** Settings refused for a reason the caller can fix; `details.field` names the offending field. */

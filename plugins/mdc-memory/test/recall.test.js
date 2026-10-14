@@ -42,13 +42,16 @@ async function start({ subprocess = createFakeSubprocess(), storageDomain } = {}
   return { fake, http, stop };
 }
 
-test('recall settings start at the defaults', async () => {
+/** The limits every recall settings answer carries for the settings UI. */
+const LIMITS = { minSimilarity: { min: 0, max: 1 }, maxLessons: { min: 1, max: 10 } };
+
+test('recall settings start at the defaults, with the limits of each setting', async () => {
   const { http } = await start();
 
   const settings = await http.request('GET', '/mdc-memory/recall-settings');
 
   assert.equal(settings.status, 200);
-  assert.deepEqual(settings.body, { onUserMessage: true, minSimilarity: 0.65, maxLessons: 3 });
+  assert.deepEqual(settings.body, { settings: { onUserMessage: true, minSimilarity: 0.65, maxLessons: 3 }, limits: LIMITS });
 });
 
 test('a partial update changes only the given settings and survives a plugin reload', async () => {
@@ -58,11 +61,11 @@ test('a partial update changes only the given settings and survives a plugin rel
   const updated = await first.http.request('POST', '/mdc-memory/recall-settings/update', { body: { minSimilarity: 0.7, maxLessons: 5 } });
   const turnedOff = await first.http.request('POST', '/mdc-memory/recall-settings/update', { body: { onUserMessage: false } });
 
-  assert.deepEqual([updated.status, updated.body], [200, { onUserMessage: true, minSimilarity: 0.7, maxLessons: 5 }]);
-  assert.deepEqual(turnedOff.body, { onUserMessage: false, minSimilarity: 0.7, maxLessons: 5 });
+  assert.deepEqual([updated.status, updated.body], [200, { settings: { onUserMessage: true, minSimilarity: 0.7, maxLessons: 5 }, limits: LIMITS }]);
+  assert.deepEqual(turnedOff.body.settings, { onUserMessage: false, minSimilarity: 0.7, maxLessons: 5 });
   await first.stop();
   const second = await start({ storageDomain: createFakeStorageDomain(storageDomain.medium) });
-  assert.deepEqual((await second.http.request('GET', '/mdc-memory/recall-settings')).body, { onUserMessage: false, minSimilarity: 0.7, maxLessons: 5 });
+  assert.deepEqual((await second.http.request('GET', '/mdc-memory/recall-settings')).body.settings, { onUserMessage: false, minSimilarity: 0.7, maxLessons: 5 });
 });
 
 test('invalid recall settings are refused and leave the settings unchanged', async () => {
@@ -91,7 +94,7 @@ test('invalid recall settings are refused and leave the settings unchanged', asy
     unknownField: { status: 400, code: 'invalid-request', field: 'topK' },
     notObject: { status: 400, code: 'invalid-request', field: undefined },
   });
-  assert.deepEqual((await http.request('GET', '/mdc-memory/recall-settings')).body, { onUserMessage: true, minSimilarity: 0.65, maxLessons: 3 });
+  assert.deepEqual((await http.request('GET', '/mdc-memory/recall-settings')).body.settings, { onUserMessage: true, minSimilarity: 0.65, maxLessons: 3 });
 });
 
 test('a user message to a main agent goes on alone while basic-memory is not ready', async () => {

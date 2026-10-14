@@ -166,10 +166,10 @@ The lessons below were recalled automatically from the user's knowledge bases be
 | `POST /mdc-memory/kbs/add` | 请求体 `{ name, path }`，返回 `{ item }` |
 | `POST /mdc-memory/kbs/delete` | 请求体 `{ name }`，返回被删除的 `{ item }` |
 | `POST /mdc-memory/kbs/set-enabled` | 请求体 `{ name, enabled }`，返回 `{ item }` |
-| `GET /mdc-memory/recall-settings` | 召回配置 `{ onUserMessage, minSimilarity, maxLessons }` |
-| `POST /mdc-memory/recall-settings/update` | 请求体为召回配置字段的任意子集，返回修改后的完整配置；字段未知或取值非法时返回 400 `invalid-request`，`details.field` 为出错字段 |
+| `GET /mdc-memory/recall-settings` | `{ settings, limits }`：`settings` 为召回配置 `{ onUserMessage, minSimilarity, maxLessons }`，`limits` 为数值字段的取值范围 `{ minSimilarity: { min, max }, maxLessons: { min, max } }`（含两端），设置页据此给出可选值 |
+| `POST /mdc-memory/recall-settings/update` | 请求体为召回配置字段的任意子集，返回修改后的 `{ settings, limits }`；字段未知或取值非法时返回 400 `invalid-request`，`details.field` 为出错字段 |
 
-知识库接口的错误码：
+知识库接口的错误码如下。知识库模块在 `host/knowledge-base/errors.js` 中定义每个拒绝码及其类别（输入无效、与已登记的冲突、知识库不存在），HTTP 层只按类别映射为 400、409、404；设置页从自己的文案字典（`error_<code>` 键）得知哪些码有专门的提示，其余显示通用提示。
 
 | 状态 | `code` | 含义 |
 |---|---|---|
