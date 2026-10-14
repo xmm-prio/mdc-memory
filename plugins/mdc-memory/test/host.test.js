@@ -197,6 +197,38 @@ test('rejects an unknown segmentation strategy and a relative user dictionary pa
   assert.throws(() => apply(fake.ctx, { dataDir, segmentationUserDict: 'terms.txt' }), /segmentationUserDict must be an absolute path/);
 });
 
+test('rejects a memory tool whitelist that is not a list of tool names', () => {
+  const fake = createFakeCtx({ subprocess: createFakeSubprocess() });
+  cleanups.push(() => fake.dispose());
+  const dataDir = join(workdir, 'memory');
+
+  assert.throws(() => apply(fake.ctx, { dataDir, memoryTools: 'search_notes' }), /memoryTools must be a list of tool names/);
+  assert.throws(() => apply(fake.ctx, { dataDir, memoryTools: ['search notes'] }), /memoryTools must be a list of tool names/);
+});
+
+test('main agents are offered no memory tools while basic-memory is preparing', async () => {
+  const gate = createGate();
+  const subprocess = createFakeSubprocess({ uvSync: async () => { await gate.opened; return 0; } });
+  const { fake } = await start(subprocess, { pythonSource: makeSource() });
+
+  const agent = await fake.agents.create();
+
+  assert.deepEqual(await fake.agents.toolNames(agent), []);
+  assert.equal(await fake.agents.prompt(agent), '');
+  gate.open();
+});
+
+test('main agents are offered no memory tools while no knowledge base exists', async () => {
+  const { fake, http } = await start(createFakeSubprocess(), { pythonSource: makeSource() });
+  await waitForState(http, 'ready');
+
+  const agent = await fake.agents.create();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  assert.deepEqual(await fake.agents.toolNames(agent), []);
+  assert.equal(await fake.agents.prompt(agent), '');
+});
+
 /** Set environment variables of this process for one test. */
 function setEnv(values) {
   const previous = Object.fromEntries(Object.keys(values).map((name) => [name, process.env[name]]));

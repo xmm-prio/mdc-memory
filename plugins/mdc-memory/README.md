@@ -1,6 +1,6 @@
 # @local/mdc-memory
 
-dsh bundle：在本机托管一个 basic-memory 进程，为 agent 提供长期记忆，并在设置的 Memory 区域展示运行状态、管理知识库。安装、升级、卸载与开发模式见仓库根目录的 `README.md`。
+dsh bundle：在本机托管一个 basic-memory 进程，为 agent 提供长期记忆（记忆工具与记忆提示词），并在设置的 Memory 区域展示运行状态、管理知识库。安装、升级、卸载与开发模式见仓库根目录的 `README.md`。
 
 ## 结构
 
@@ -9,8 +9,10 @@ dsh bundle：在本机托管一个 basic-memory 进程，为 agent 提供长期�
 | `host/` | Host 插件行 `mdc-memory`（包入口 `@local/mdc-memory/host`） |
 | `host/config.js` | 配置默认值与形状校验 |
 | `host/runtime/` | 托管运行时：状态机、子进程组、隔离环境，以及 `stages/` 下的四个阶段（source、venv、model、server） |
-| `host/basic-memory/` | basic-memory v2 REST API 的客户端（只在运行时就绪时可用） |
+| `host/basic-memory/` | basic-memory 的客户端：v2 REST API 与 MCP 端点（只在运行时就绪时可用） |
 | `host/knowledge-base/` | 知识库：列表、添加、删除、使能、生效知识库计算、注册校验，以及经验 schema 笔记（`lesson-schema.md`） |
+| `host/agents/` | 主 agent 跟踪（`watchMainAgents`），供记忆工具与召回共用 |
+| `host/memory-tools/` | 记忆工具代理：上游工具目录与白名单、代理工具定义、每次调用的知识库判定、记忆提示词段落 |
 | `host/http/` | 通用 JSON 路由注册（鉴权、请求体、错误映射）、运行时接口和知识库接口 |
 | `client/` | Client 插件行 `mdc-memory-ui`（包入口 `@local/mdc-memory`），设置中的 Memory 区域 |
 | `python/` | 打包时由 `tools/pack` 放入的 basic-memory 源码，只存在于 tarball 中，不进 git |
@@ -25,6 +27,7 @@ dsh bundle：在本机托管一个 basic-memory 进程，为 agent 提供长期�
 | `python` | `python` | 用来执行 `python -m uv` 的解释器，可写 PATH 上的名字或绝对路径 |
 | `segmentation` | `jieba` | 全文检索对中文等无空格文字的切分策略：`jieba` 按词切分，`ngram` 为上游的单字加双字片段 |
 | `segmentationUserDict` | 无 | jieba 用户词典的绝对路径（UTF-8，每行 `词语 [词频] [词性]`），其中的术语作为整词切分；仅 `jieba` 策略使用 |
+| `memoryTools` | `[write_note, read_note, edit_note, search_notes, build_context, recent_activity, list_directory]` | 记忆工具白名单：暴露给主 agent 的 basic-memory MCP 工具名（字母、数字、`_`、`-`，不超过 57 个字符），按此顺序注册 |
 
 profile 的 `cordis.patch.yml` 中覆盖配置会整体替换 `config`，未写的字段使用上表默认值。开发时把 `pythonSource` 指向 submodule：
 
@@ -71,6 +74,21 @@ basic-memory 的配置与索引位于 `<dataDir>/config`，默认项目位于 `<
 
 `schema/lesson.md` 定义经验笔记（`type: lesson`）：必填观察 `[symptom]`（可多条）、`[cause]`、`[fix]`（可多条），可选观察 `[condition]`（可多条），可选关系 `relates_to`、`supersedes`，frontmatter 含 `status`（`active` | `outdated`）与可选的 `tags`，校验模式为告警（`warn`）。
 
+## 记忆工具
+
+按 ADR 0002，Host 插件把 basic-memory 的 MCP 工具代理为 dsh 原生工具，只注册给主 agent。
+
+- 主 agent：创建时没有所属 agent 的运行时根 agent，且会话不是以子 agent 身份创建的（`session.header.origin` 不为 `subagent`）。记忆工具和记忆提示词注册在主 agent 自己的作用域上；子 agent 的作用域链不包含委派它的 agent，所以看不到。插件加载时已经存在的主 agent 同样会被接管。
+- 工具目录：basic-memory 就绪后用 MCP `tools/list` 读取上游工具，按白名单 `memoryTools` 的顺序取出其中在单个项目内工作的工具（参数里有 `project`），注册为 `memory_<上游工具名>`。上游新增的工具只需加入白名单即可暴露。白名单里上游没有的工具，以及不在单个项目内工作的工具（如 `list_memory_projects`），都不会暴露，并在日志中告警。上游工具列表不变时沿用同一组工具定义，开关知识库不会让工具重新注册。
+- 参数：上游用来选择项目的 `project_id`、`projects`、`search_all_projects`、`workspace` 不暴露给模型，`project` 改为可选的知识库名称。调用里出现工具没有声明的参数（包括上游的别名，如 `all_projects`）时直接拒绝。
+- 每次调用都实时读取生效知识库，再确定目标知识库：
+  - 传了 `project`：必须是生效知识库（名称不区分大小写）。已关闭的知识库、不存在的名称（包括内部默认项目 `main`）都会被拒绝，错误中说明原因并列出生效知识库。
+  - 没传 `project`：只有一个生效知识库时自动补全；有多个时拒绝，错误中列出可选的知识库。
+  - 参数值是 `memory://` URL、且首段指向某个项目时，该项目必须就是目标知识库：指向另一个生效知识库时提示改传对应的 `project`；指向未生效的知识库或内部默认项目时拒绝。
+  - 转发给 basic-memory 的调用总是带上显式的 `project`。basic-memory 报告的工具错误作为工具调用失败返回给 agent。
+- 记忆提示词：一个常驻系统提示词段落，列出生效知识库，并说明何时读取 `lesson` 技能（技能本身由第 6 张票提供）。段落和工具一起注册在主 agent 上，文字随生效知识库实时变化。
+- 没有生效知识库、basic-memory 未就绪或读取工具目录失败时，主 agent 上既没有记忆工具，也没有记忆提示词。进行中的会话会随设置变化即时增减；插件卸载时一并撤下。
+
 ## HTTP 接口
 
 都需要 dsh 的浏览器登录凭据。失败时返回 `{ code, message, details? }`。
@@ -105,9 +123,12 @@ basic-memory 的配置与索引位于 `<dataDir>/config`，默认项目位于 `<
 npm test
 ```
 
-测试文件串行执行（`--test-concurrency=1`），因为两个真实进程测试共用同一个 `dataDir`。真实进程测试默认跳过，设置 `MDC_MEMORY_REAL_TEST=1` 后运行：
+测试文件串行执行（`--test-concurrency=1`），因为各个真实进程测试共用同一个 `dataDir`。真实进程测试默认跳过，设置 `MDC_MEMORY_REAL_TEST=1` 后运行：
 
 - `test/real-basic-memory.test.js`：用 submodule 源码和 dsh 自带的子进程服务把 basic-memory 拉到就绪再关闭。
 - `test/real-knowledge-base.test.js`：在真实 basic-memory 和 dsh 自带的存储服务上验证知识库的列表、添加、校验、schema 生成、检索、开关、删除和重启后保持。
+- `test/real-memory-tools.test.js`：在真实 basic-memory 前面挂上 dsh 自带的工具注册表与系统提示词服务，验证主 agent 与子 agent 看到的工具和提示词、白名单、`project` 补全与拒绝、开关即时生效，以及插件卸载后撤下。
+
+假 ctx 带有一个 agent 平面（`test/support/agent-plane.js`）：测试通过它创建、销毁主 agent 和子 agent，并查看每个 agent 实际拿到的工具 schema、系统提示词和工具调用结果。快速测试用内存实现，真实进程测试换成 dsh 自带的 `dsh-tools`、`dsh-system-prompt` 与 `dsh-scope`。
 
 可选环境变量见 `test/support/real-dsh.js` 文件头。

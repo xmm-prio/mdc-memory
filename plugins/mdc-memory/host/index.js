@@ -1,10 +1,12 @@
 /**
  * Host row `mdc-memory`: hosts the basic-memory process, manages knowledge
- * bases and serves both to the settings UI. Wiring only; the runtime, the
- * knowledge bases and the HTTP API live in their own modules.
+ * bases and serves both to the settings UI, and offers memory tools to main
+ * agents. Wiring only; the runtime, the knowledge bases, the HTTP API and the
+ * memory tools live in their own modules.
  */
 import { fileURLToPath } from 'node:url';
 
+import { watchMainAgents } from './agents/main-agents.js';
 import { createBasicMemoryClient } from './basic-memory/client.js';
 import { resolveConfig } from './config.js';
 import { knowledgeBaseEndpoints } from './http/knowledge-base-endpoints.js';
@@ -12,6 +14,7 @@ import { registerEndpoints } from './http/router.js';
 import { runtimeEndpoints } from './http/runtime-endpoints.js';
 import { createEnablement } from './knowledge-base/enablement.js';
 import { createKnowledgeBases } from './knowledge-base/index.js';
+import { createMemoryTools } from './memory-tools/index.js';
 import { createRuntime } from './runtime/index.js';
 
 export const name = 'mdc-memory';
@@ -35,12 +38,17 @@ export function apply(ctx, rawConfig) {
     return () => runtime.stop();
   }, 'mdc-memory: basic-memory runtime');
 
+  const basicMemory = createBasicMemoryClient(runtime);
   const enablement = createEnablement();
   ctx.effect(() => enablement.mount(ctx.storageDomain), 'mdc-memory: enablement store');
-  const knowledgeBases = createKnowledgeBases({ basicMemory: createBasicMemoryClient(runtime), enablement, logger: ctx.logger });
+  const knowledgeBases = createKnowledgeBases({ basicMemory, enablement, logger: ctx.logger });
 
   ctx.inject(['webServer', 'connection'], (web) => registerEndpoints(web, [
     ...runtimeEndpoints(runtime),
     ...knowledgeBaseEndpoints(knowledgeBases),
   ]));
+
+  const memoryTools = createMemoryTools({ basicMemory, knowledgeBases, whitelist: config.memoryTools, logger: ctx.logger });
+  ctx.effect(() => memoryTools.start(), 'mdc-memory: memory tools');
+  ctx.inject(['agents', 'tools', 'systemPrompt'], (plane) => watchMainAgents(plane, (agent) => memoryTools.attach(agent)));
 }

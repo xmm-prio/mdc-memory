@@ -10,41 +10,14 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
-import { apply } from '../host/index.js';
-import { createFakeCtx, serveRoutes } from './support/fake-ctx.js';
-import { REAL_TEST_SKIP, realDsh, realHostConfig } from './support/real-dsh.js';
-
-const READY_TIMEOUT_MS = 15 * 60_000;
+import { REAL_TEST_SKIP, realHostConfig } from './support/real-dsh.js';
+import { READY_TIMEOUT_MS, startRealHost, unregisterLeftoverProjects, until } from './support/real-host.js';
 
 let workdir;
 let config;
 let host;
 
-/** Start the Host the way a dsh launch does and wait until basic-memory is ready. */
-async function startHost() {
-  const dsh = await realDsh({ storageRoot: join(workdir, 'storages') });
-  const fake = createFakeCtx({ subprocess: dsh.subprocess, storageDomain: dsh.storageDomain });
-  apply(fake.ctx, config);
-  const http = await serveRoutes(fake.routes);
-  const started = Date.now();
-  let status;
-  for (;;) {
-    status = (await http.request('GET', '/mdc-memory/status')).body;
-    if (status.state !== 'preparing') break;
-    assert.ok(Date.now() - started < READY_TIMEOUT_MS, `still preparing: ${JSON.stringify(status)}`);
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  assert.equal(status.state, 'ready', JSON.stringify(status, null, 2));
-  return {
-    http,
-    endpoint: status.endpoint,
-    async stop() {
-      await http.close();
-      await fake.dispose();
-      await dsh.dispose();
-    },
-  };
-}
+const startHost = () => startRealHost({ workdir, config });
 
 /** basic-memory reports `C:/...` while Node builds `C:\...`; Windows paths ignore case. */
 function samePath(a, b) {
@@ -120,35 +93,16 @@ function writeNote(root, relativePath, content) {
   return file;
 }
 
-/** Poll until `probe` resolves to a truthy value, which is returned. */
-async function until(probe, timeoutMs = 60_000) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const value = await probe();
-    if (value) return value;
-    assert.ok(Date.now() < deadline, 'condition not reached in time');
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-}
-
-/** The persistent test dataDir may hold projects of an earlier, aborted run. */
-async function unregisterLeftoverProjects() {
-  const { projects } = await basicMemory('/v2/projects/');
-  for (const project of projects.filter((candidate) => !candidate.is_default)) {
-    await basicMemory(`/v2/projects/${project.external_id}?delete_notes=false`, { method: 'DELETE' });
-  }
-}
-
 describe('knowledge bases on a real basic-memory', { skip: REAL_TEST_SKIP, timeout: READY_TIMEOUT_MS * 2 }, () => {
   before(async () => {
     workdir = mkdtempSync(join(tmpdir(), 'mdc-memory-kb-'));
     config = realHostConfig();
     host = await startHost();
-    await unregisterLeftoverProjects();
+    await unregisterLeftoverProjects(host.endpoint);
   });
 
   after(async () => {
-    if (host) await unregisterLeftoverProjects();
+    if (host) await unregisterLeftoverProjects(host.endpoint);
     await host?.stop();
     rmSync(workdir, { recursive: true, force: true });
   });

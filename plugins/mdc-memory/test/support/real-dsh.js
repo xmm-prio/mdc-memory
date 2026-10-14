@@ -10,6 +10,7 @@
  *   DSH_PKGS=<dir>                     dsh's bundled @deepseek-ai packages (default: from `npm root -g`)
  */
 import { execSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { cpSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -43,11 +44,13 @@ function dshPackages() {
  * The dsh process facts the Host row runs under, set up as the launcher does:
  * the proxy policy installed from the environment (it appends dsh's loopback
  * bypass entries, `[::1]` included, to NO_PROXY), the real `subprocess`
- * service, and the real `storageDomain` service persisting JSON files under
- * `storageRoot` like dsh's own `storages` directory. Disposing and mounting
- * again over the same root behaves like a dsh restart.
+ * service, the real `storageDomain` service persisting JSON files under
+ * `storageRoot` like dsh's own `storages` directory, and dsh's tool registry
+ * and system prompt services behind an agent scopes adapter (see
+ * agent-plane.js). Disposing and mounting again over the same root behaves
+ * like a dsh restart.
  * @param {{ storageRoot: string }} options
- * @returns {Promise<{ subprocess: object, real: object, spawned: object[], storageDomain: object, dispose: () => Promise<void> }>}
+ * @returns {Promise<{ subprocess: object, real: object, spawned: object[], storageDomain: object, agentScopes: object, dispose: () => Promise<void> }>}
  *   `subprocess` records every spawn spec in `spawned`; `real` is the unwrapped service.
  */
 export async function realDsh({ storageRoot }) {
@@ -59,14 +62,18 @@ export async function realDsh({ storageRoot }) {
     (message) => console.warn(`dsh proxy: ${message}`),
   );
   const { Context } = await load('cordis');
+  const systemPrompt = await load('dsh-system-prompt');
   const root = new Context();
   const fibers = [
     root.plugin((await load('dsh-subprocess-local')).default),
     root.plugin((await load('dsh-storage')).default),
     root.plugin(await load('dsh-storage-json'), { root: storageRoot }),
     root.plugin(await load('dsh-storage-domain'), { backend: 'json' }),
+    root.plugin(systemPrompt.default, {}),
+    root.plugin((await load('dsh-tools')).default, {}),
   ];
   await Promise.all(fibers);
+  const agentPlane = await new Promise((resolve) => root.inject(['tools', 'systemPrompt'], (ctx) => { resolve(ctx); }));
   const real = root.get('subprocess');
   const spawned = [];
   return {
@@ -80,9 +87,28 @@ export async function realDsh({ storageRoot }) {
       },
     },
     storageDomain: root.get('storageDomain'),
+    agentScopes: realAgentScopes(agentPlane, systemPrompt.renderPrompt, await load('dsh-scope')),
     async dispose() {
       for (const fiber of fibers.reverse()) await fiber.dispose();
       await uninstallProxy();
+    },
+  };
+}
+
+/** Agent scopes minted by dsh-scope over dsh's real tool registry and system prompt. */
+function realAgentScopes(plane, renderPrompt, { createScope }) {
+  const assemble = (agent) => plane.systemPrompt.assemble({ scope: agent });
+  return {
+    services: { tools: plane.tools, systemPrompt: plane.systemPrompt },
+    open(agent, { parent } = {}) {
+      const scope = createScope(plane, agent, parent ? { parent } : {});
+      return { ctx: scope.ctx, dispose: () => scope.dispose() };
+    },
+    schemas: async (agent) => (await assemble(agent)).tools,
+    prompt: async (agent) => renderPrompt(await assemble(agent)),
+    async call(agent, name, args) {
+      const result = await plane.tools.execute({ callId: randomUUID(), name, arguments: args, agent, signal: new AbortController().signal });
+      return { isError: result.isError, text: result.content.filter((block) => block.type === 'text').map((block) => block.text).join('\n') };
     },
   };
 }

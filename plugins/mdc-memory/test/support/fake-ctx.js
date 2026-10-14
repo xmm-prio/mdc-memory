@@ -1,10 +1,12 @@
 /**
  * Minimal stand-in for the dsh plugin context handed to `apply(ctx, config)`.
- * It records effects, routes and logs, and lets a test dispose the plugin the
- * way cordis would when the row is unloaded.
+ * It records effects, routes, event listeners and logs, drives an agent plane
+ * (see agent-plane.js), and lets a test dispose the plugin the way cordis
+ * would when the row is unloaded.
  */
 import http from 'node:http';
 
+import { createAgentPlane, memoryScopes } from './agent-plane.js';
 import { createFakeStorageDomain } from './fake-storage-domain.js';
 
 export const AUTH_HEADER = 'x-test-auth';
@@ -14,13 +16,21 @@ export const AUTH_HEADER = 'x-test-auth';
  *   defaults to a fresh in-memory one, as every dsh profile mounts it.
  * @param {object} [options]
  * @param {boolean} [options.web] - provide `webServer` + `connection` (web profile); default true.
+ * @param {object} [options.scopes] - agent scopes adapter; default in-memory.
  */
-export function createFakeCtx(rootServices, { web = true } = {}) {
-  const services = { storageDomain: createFakeStorageDomain(), ...rootServices };
+export function createFakeCtx(rootServices, { web = true, scopes = memoryScopes() } = {}) {
   const disposers = [];
   const routes = new Map();
+  const listeners = new Map();
   const logs = [];
   const log = (level) => (...args) => logs.push({ level, message: args.join(' ') });
+
+  /** Serial dispatch: listeners run in registration order and are awaited. */
+  async function emit(name, payload) {
+    for (const listener of [...(listeners.get(name) ?? [])]) await listener(payload);
+  }
+  const agents = createAgentPlane(scopes, emit);
+  const services = { storageDomain: createFakeStorageDomain(), ...agents.services, ...rootServices };
 
   const base = {
     ...services,
@@ -34,6 +44,14 @@ export function createFakeCtx(rootServices, { web = true } = {}) {
         : result;
       disposers.push(dispose);
       return dispose;
+    },
+    /** Like cordis, a listener is removed when the plugin is unloaded. */
+    on(name, listener) {
+      if (!listeners.has(name)) listeners.set(name, new Set());
+      listeners.get(name).add(listener);
+      const off = () => listeners.get(name).delete(listener);
+      disposers.push(off);
+      return off;
     },
   };
   const webServices = {
@@ -60,6 +78,8 @@ export function createFakeCtx(rootServices, { web = true } = {}) {
     ctx,
     routes,
     logs,
+    /** The agent plane: create and dispose agents, and see what each agent sees. */
+    agents,
     /** Run every effect disposer in reverse order, as plugin unload does. */
     async dispose() {
       for (const dispose of disposers.reverse()) if (typeof dispose === 'function') await dispose();
