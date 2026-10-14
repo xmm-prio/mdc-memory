@@ -13,10 +13,11 @@ import { createDomainSlot } from '../storage/domain-slot.js';
 
 /**
  * With `BAAI/bge-small-zh-v1.5`, a message and a lesson about the same problem
- * score about 0.7-0.8, while unrelated technical text reaches up to about 0.58.
+ * score about 0.7-0.8, while unrelated technical text reaches up to about 0.58;
+ * the default threshold sits between the two.
  * @type {Readonly<RecallSettings>}
  */
-export const DEFAULT_RECALL_SETTINGS = Object.freeze({ onUserMessage: true, minSimilarity: 0.6, maxLessons: 3 });
+export const DEFAULT_RECALL_SETTINGS = Object.freeze({ onUserMessage: true, minSimilarity: 0.65, maxLessons: 3 });
 
 export const MAX_LESSONS_LIMIT = 10;
 

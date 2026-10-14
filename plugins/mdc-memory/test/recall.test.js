@@ -48,7 +48,7 @@ test('recall settings start at the defaults', async () => {
   const settings = await http.request('GET', '/mdc-memory/recall-settings');
 
   assert.equal(settings.status, 200);
-  assert.deepEqual(settings.body, { onUserMessage: true, minSimilarity: 0.6, maxLessons: 3 });
+  assert.deepEqual(settings.body, { onUserMessage: true, minSimilarity: 0.65, maxLessons: 3 });
 });
 
 test('a partial update changes only the given settings and survives a plugin reload', async () => {
@@ -91,7 +91,7 @@ test('invalid recall settings are refused and leave the settings unchanged', asy
     unknownField: { status: 400, code: 'invalid-request', field: 'topK' },
     notObject: { status: 400, code: 'invalid-request', field: undefined },
   });
-  assert.deepEqual((await http.request('GET', '/mdc-memory/recall-settings')).body, { onUserMessage: true, minSimilarity: 0.6, maxLessons: 3 });
+  assert.deepEqual((await http.request('GET', '/mdc-memory/recall-settings')).body, { onUserMessage: true, minSimilarity: 0.65, maxLessons: 3 });
 });
 
 test('a user message to a main agent goes on alone while basic-memory is not ready', async () => {

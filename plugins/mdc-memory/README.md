@@ -150,7 +150,7 @@ The lessons below were recalled automatically from the user's knowledge bases be
 | 字段 | 默认值 | 说明 |
 |---|---|---|
 | `onUserMessage` | `true` | 用户消息召回开关 |
-| `minSimilarity` | `0.6` | 相似度阈值，0–1。用 `BAAI/bge-small-zh-v1.5` 实测：同一个坑的消息与经验约 0.7–0.8，无关的技术内容最高约 0.58，闲聊约 0.2–0.3 |
+| `minSimilarity` | `0.65` | 相似度阈值，0–1。用 `BAAI/bge-small-zh-v1.5` 实测：同一个坑的消息与经验约 0.7–0.8，无关的技术内容最高约 0.58，闲聊约 0.2–0.3；默认值取两者之间 |
 | `maxLessons` | `3` | 每条消息最多注入的经验条数，1–10 |
 
 ## HTTP 接口
