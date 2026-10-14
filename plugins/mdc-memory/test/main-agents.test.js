@@ -33,7 +33,7 @@ test('never attaches to subagents, including a resumed subagent session', async 
   const { fake, attached } = watch();
   const main = await fake.agents.create();
 
-  await fake.agents.create({ owner: main });
+  await fake.agents.create({ parent: main });
   await fake.agents.create({ origin: 'subagent' });
 
   assert.deepEqual(attached, [main]);

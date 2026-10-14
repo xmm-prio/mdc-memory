@@ -13,9 +13,23 @@ import { isAbsolute } from 'node:path';
  * @property {string} python - bare PATH name or absolute path of the Python that runs `uv`.
  * @property {'jieba' | 'ngram'} segmentation - how full-text search splits Chinese and other unspaced scripts.
  * @property {string | undefined} segmentationUserDict - absolute path of a jieba user dictionary.
+ * @property {readonly string[]} memoryTools - names of the basic-memory MCP tools offered to agents (the whitelist).
  */
 
 const SEGMENTATIONS = ['jieba', 'ngram'];
+
+/** Note writing, reading, editing, search, context traversal, recent activity and directory browsing. */
+const DEFAULT_MEMORY_TOOLS = Object.freeze([
+  'write_note',
+  'read_note',
+  'edit_note',
+  'search_notes',
+  'build_context',
+  'recent_activity',
+  'list_directory',
+]);
+/** An agent tool is named `memory_<upstream name>`, within the 64-character `[A-Za-z0-9_-]` function-name contract. */
+const MEMORY_TOOL_NAME = /^[A-Za-z0-9_-]{1,57}$/;
 
 /**
  * @param {unknown} raw - the row's config as written in the patch.
@@ -32,7 +46,15 @@ export function resolveConfig(raw, defaults) {
     python: nonEmptyString(input.python ?? 'python', 'python'),
     segmentation: oneOf(input.segmentation ?? 'jieba', SEGMENTATIONS, 'segmentation'),
     segmentationUserDict: optionalAbsolutePath(input.segmentationUserDict, 'segmentationUserDict'),
+    memoryTools: toolNames(input.memoryTools ?? DEFAULT_MEMORY_TOOLS, 'memoryTools'),
   });
+}
+
+function toolNames(value, field) {
+  if (!Array.isArray(value) || !value.every((name) => typeof name === 'string' && MEMORY_TOOL_NAME.test(name))) {
+    throw new TypeError(`mdc-memory: ${field} must be a list of tool names (letters, digits, '_' or '-', at most 57 characters)`);
+  }
+  return Object.freeze([...new Set(value)]);
 }
 
 function oneOf(value, allowed, field) {

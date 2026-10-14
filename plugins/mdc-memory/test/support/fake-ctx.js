@@ -1,12 +1,12 @@
 /**
  * Minimal stand-in for the dsh plugin context handed to `apply(ctx, config)`.
- * It records effects, routes and logs, provides the agent plane (see
- * fake-agents.js), and lets a test dispose the plugin the way cordis would
- * when the row is unloaded.
+ * It records effects, routes and logs, drives an agent plane (see
+ * agent-plane.js) that also dispatches the plugin's event listeners, and lets
+ * a test dispose the plugin the way cordis would when the row is unloaded.
  */
 import http from 'node:http';
 
-import { createFakeAgentPlane, disposerOf } from './fake-agents.js';
+import { createAgentPlane, disposerOf, memoryScopes } from './agent-plane.js';
 import { createFakeStorageDomain } from './fake-storage-domain.js';
 
 export const AUTH_HEADER = 'x-test-auth';
@@ -16,10 +16,11 @@ export const AUTH_HEADER = 'x-test-auth';
  *   defaults to a fresh in-memory one, as every dsh profile mounts it.
  * @param {object} [options]
  * @param {boolean} [options.web] - provide `webServer` + `connection` (web profile); default true.
+ * @param {object} [options.scopes] - agent scopes adapter; default in-memory.
  */
-export function createFakeCtx(rootServices, { web = true } = {}) {
-  const services = { storageDomain: createFakeStorageDomain(), ...rootServices };
-  const agents = createFakeAgentPlane();
+export function createFakeCtx(rootServices, { web = true, scopes = memoryScopes() } = {}) {
+  const agents = createAgentPlane(scopes);
+  const services = { storageDomain: createFakeStorageDomain(), ...agents.services, ...rootServices };
   const disposers = [];
   const routes = new Map();
   const logs = [];
@@ -35,7 +36,7 @@ export function createFakeCtx(rootServices, { web = true } = {}) {
       disposers.push(dispose);
       return dispose;
     },
-    /** Plugin-level listener; removed when the plugin is disposed. */
+    /** Like cordis, a listener is removed when the plugin is unloaded. */
     on(name, listener) {
       const off = disposerOf(agents.on(name, listener));
       disposers.push(off);
@@ -57,7 +58,7 @@ export function createFakeCtx(rootServices, { web = true } = {}) {
   const ctx = {
     ...base,
     inject(deps, callback) {
-      const provided = { ...services, ...agents.services, ...(web ? webServices : {}) };
+      const provided = web ? { ...services, ...webServices } : services;
       if (deps.every((dep) => dep in provided)) callback({ ...base, ...provided });
     },
   };
@@ -66,8 +67,9 @@ export function createFakeCtx(rootServices, { web = true } = {}) {
     ctx,
     routes,
     logs,
-    /** The agent plane: create/dispose agents and send user messages through the pre-step. */
+    /** The agent plane: create and dispose agents, see what each agent sees, send user messages. */
     agents,
+    /** Run a waterfall event through the plugin's and the payload agent's listeners. */
     waterfall: agents.waterfall,
     /** Run every effect disposer in reverse order, as plugin unload does. */
     async dispose() {

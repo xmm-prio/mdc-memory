@@ -1,10 +1,13 @@
 /**
  * Host row `mdc-memory`: hosts the basic-memory process, manages knowledge
- * bases and serves both to the settings UI. Wiring only; the runtime, the
- * knowledge bases and the HTTP API live in their own modules.
+ * bases and serves both to the settings UI, offers memory tools to main
+ * agents and recalls lessons when the user messages one. Wiring only; the
+ * runtime, the knowledge bases, the HTTP API, the memory tools and recall
+ * live in their own modules.
  */
 import { fileURLToPath } from 'node:url';
 
+import { watchMainAgents } from './agents/main-agents.js';
 import { createBasicMemoryClient } from './basic-memory/client.js';
 import { resolveConfig } from './config.js';
 import { knowledgeBaseEndpoints } from './http/knowledge-base-endpoints.js';
@@ -13,6 +16,7 @@ import { registerEndpoints } from './http/router.js';
 import { runtimeEndpoints } from './http/runtime-endpoints.js';
 import { createEnablement } from './knowledge-base/enablement.js';
 import { createKnowledgeBases } from './knowledge-base/index.js';
+import { createMemoryTools } from './memory-tools/index.js';
 import { createRecall } from './recall/index.js';
 import { createRecallSettings } from './recall/settings.js';
 import { createRuntime } from './runtime/index.js';
@@ -42,15 +46,19 @@ export function apply(ctx, rawConfig) {
   const enablement = createEnablement();
   ctx.effect(() => enablement.mount(ctx.storageDomain), 'mdc-memory: enablement store');
   const knowledgeBases = createKnowledgeBases({ basicMemory, enablement, logger: ctx.logger });
-
   const recallSettings = createRecallSettings();
   ctx.effect(() => recallSettings.mount(ctx.storageDomain), 'mdc-memory: recall settings store');
-  const recall = createRecall({ basicMemory, knowledgeBases, settings: recallSettings, logger: ctx.logger });
-  ctx.inject(['agents', 'sessionProjections'], (plane) => recall.mount(plane));
 
   ctx.inject(['webServer', 'connection'], (web) => registerEndpoints(web, [
     ...runtimeEndpoints(runtime),
     ...knowledgeBaseEndpoints(knowledgeBases),
     ...recallEndpoints(recallSettings),
   ]));
+
+  const memoryTools = createMemoryTools({ basicMemory, knowledgeBases, whitelist: config.memoryTools, logger: ctx.logger });
+  ctx.effect(() => memoryTools.start(), 'mdc-memory: memory tools');
+  ctx.inject(['agents', 'tools', 'systemPrompt'], (plane) => watchMainAgents(plane, (agent) => memoryTools.attach(agent)));
+
+  const recall = createRecall({ basicMemory, knowledgeBases, settings: recallSettings, logger: ctx.logger });
+  ctx.inject(['agents', 'sessionProjections'], (plane) => recall.mount(plane));
 }
