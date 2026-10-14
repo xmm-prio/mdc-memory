@@ -11,7 +11,11 @@ import { isAbsolute } from 'node:path';
  * @property {string} pythonSource - absolute path of the basic-memory source tree; by default the one packed into the bundle.
  * @property {string} dataDir - absolute directory holding the venv, model cache and basic-memory state.
  * @property {string} python - bare PATH name or absolute path of the Python that runs `uv`.
+ * @property {'jieba' | 'ngram'} segmentation - how full-text search splits Chinese and other unspaced scripts.
+ * @property {string | undefined} segmentationUserDict - absolute path of a jieba user dictionary.
  */
+
+const SEGMENTATIONS = ['jieba', 'ngram'];
 
 /**
  * @param {unknown} raw - the row's config as written in the patch.
@@ -26,7 +30,19 @@ export function resolveConfig(raw, defaults) {
     pythonSource: optionalString(input.pythonSource, 'pythonSource') ?? defaults.pythonSource,
     dataDir: absolutePath(input.dataDir ?? defaults.dataDir, 'dataDir'),
     python: nonEmptyString(input.python ?? 'python', 'python'),
+    segmentation: oneOf(input.segmentation ?? 'jieba', SEGMENTATIONS, 'segmentation'),
+    segmentationUserDict: optionalAbsolutePath(input.segmentationUserDict, 'segmentationUserDict'),
   });
+}
+
+function oneOf(value, allowed, field) {
+  if (!allowed.includes(value)) throw new TypeError(`mdc-memory: ${field} must be one of: ${allowed.join(', ')}`);
+  return value;
+}
+
+function optionalAbsolutePath(value, field) {
+  const path = optionalString(value, field);
+  return path === undefined ? undefined : absolutePath(path, field);
 }
 
 function optionalString(value, field) {

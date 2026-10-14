@@ -165,6 +165,38 @@ test('becomes ready with basic-memory on loopback, isolated inside dataDir', asy
   assert.ok(model.argv.includes(cacheDir), 'model is pre-downloaded into the cache the server reads');
 });
 
+test('basic-memory segments Chinese text with jieba by default', async () => {
+  const subprocess = createFakeSubprocess();
+  const { http } = await start(subprocess, { pythonSource: makeSource() });
+
+  await waitForState(http, 'ready');
+
+  const { env } = subprocess.last('serve').spec;
+  assert.equal(env.BASIC_MEMORY_SCRIPT_SEGMENTATION, 'jieba');
+  assert.equal(env.BASIC_MEMORY_SCRIPT_SEGMENTATION_USER_DICT, undefined);
+});
+
+test('the segmentation strategy and user dictionary come from the config', async () => {
+  const userDict = join(workdir, 'terms.txt');
+  const subprocess = createFakeSubprocess();
+  const { http } = await start(subprocess, { pythonSource: makeSource(), segmentation: 'ngram', segmentationUserDict: userDict });
+
+  await waitForState(http, 'ready');
+
+  const { env } = subprocess.last('serve').spec;
+  assert.equal(env.BASIC_MEMORY_SCRIPT_SEGMENTATION, 'ngram');
+  assert.equal(env.BASIC_MEMORY_SCRIPT_SEGMENTATION_USER_DICT, userDict);
+});
+
+test('rejects an unknown segmentation strategy and a relative user dictionary path', () => {
+  const fake = createFakeCtx({ subprocess: createFakeSubprocess() });
+  cleanups.push(() => fake.dispose());
+  const dataDir = join(workdir, 'memory');
+
+  assert.throws(() => apply(fake.ctx, { dataDir, segmentation: 'bigram' }), /segmentation must be one of: jieba, ngram/);
+  assert.throws(() => apply(fake.ctx, { dataDir, segmentationUserDict: 'terms.txt' }), /segmentationUserDict must be an absolute path/);
+});
+
 /** Set environment variables of this process for one test. */
 function setEnv(values) {
   const previous = Object.fromEntries(Object.keys(values).map((name) => [name, process.env[name]]));

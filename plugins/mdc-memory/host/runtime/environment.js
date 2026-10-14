@@ -16,8 +16,8 @@ const BASIC_MEMORY_ENV_PREFIX = 'BASIC_MEMORY_';
 /** Proxy bypass names, lowercase first: Python's urllib (read by httpx) prefers the lowercase one. */
 const NO_PROXY_NAMES = ['no_proxy', 'NO_PROXY'];
 
-/** @param {string} dataDir - absolute data directory of the plugin. */
-export function createEnvironment(dataDir) {
+/** @param {import('../config.js').HostConfig} config */
+export function createEnvironment({ dataDir, segmentation, segmentationUserDict }) {
   const venv = join(dataDir, 'venv');
   const paths = Object.freeze({
     dataDir,
@@ -53,6 +53,8 @@ export function createEnvironment(dataDir) {
       BASIC_MEMORY_SEMANTIC_EMBEDDING_MODEL: EMBEDDING.model,
       BASIC_MEMORY_SEMANTIC_EMBEDDING_DIMENSIONS: String(EMBEDDING.dimensions),
       BASIC_MEMORY_SEMANTIC_EMBEDDING_CACHE_DIR: paths.modelCache,
+      BASIC_MEMORY_SCRIPT_SEGMENTATION: segmentation,
+      BASIC_MEMORY_SCRIPT_SEGMENTATION_USER_DICT: segmentationUserDict,
       BASIC_MEMORY_AUTO_UPDATE: 'false',
       BASIC_MEMORY_NO_PROMOS: '1',
       LOGFIRE_IGNORE_NO_CONFIG: '1',
