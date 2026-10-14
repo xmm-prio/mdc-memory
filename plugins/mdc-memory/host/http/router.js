@@ -2,8 +2,8 @@
  * Generic JSON endpoint registration on the composition's web server. Every
  * endpoint passes the connection trust fence first, answers only its own
  * method, reads a bounded JSON body for POST, and maps failures to a JSON
- * `{ code, message }` body (the web server itself answers a thrown handler
- * with an empty 400).
+ * `{ code, message, details? }` body (the web server itself answers a thrown
+ * handler with an empty 400).
  */
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -14,12 +14,14 @@ export class HttpError extends Error {
    * @param {number} status - HTTP status code.
    * @param {string} code - stable machine-readable error code.
    * @param {string} message - human-readable reason.
+   * @param {Record<string, unknown>} [details] - structured facts a client can show with the code.
    */
-  constructor(status, code, message) {
+  constructor(status, code, message, details) {
     super(message);
     this.name = 'HttpError';
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -62,7 +64,7 @@ async function serve(connection, endpoint, req, res) {
     const body = endpoint.method === 'POST' ? await readJsonBody(req) : undefined;
     sendJson(res, 200, await endpoint.handle(body));
   } catch (error) {
-    if (error instanceof HttpError) sendJson(res, error.status, { code: error.code, message: error.message });
+    if (error instanceof HttpError) sendJson(res, error.status, { code: error.code, message: error.message, details: error.details });
     else sendJson(res, 500, { code: 'internal', message: error instanceof Error ? error.message : String(error) });
   }
 }

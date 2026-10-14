@@ -1,15 +1,19 @@
 /**
- * Host row `mdc-memory`: hosts the basic-memory process and serves its status
- * to the settings UI. Wiring only; the runtime and the HTTP API live in their
- * own modules.
+ * Host row `mdc-memory`: hosts the basic-memory process, manages knowledge
+ * bases and serves both to the settings UI. Wiring only; the runtime, the
+ * knowledge bases and the HTTP API live in their own modules.
  */
+import { createBasicMemoryClient } from './basic-memory/client.js';
 import { resolveConfig } from './config.js';
+import { knowledgeBaseEndpoints } from './http/knowledge-base-endpoints.js';
 import { registerEndpoints } from './http/router.js';
 import { runtimeEndpoints } from './http/runtime-endpoints.js';
+import { createEnablement } from './knowledge-base/enablement.js';
+import { createKnowledgeBases } from './knowledge-base/index.js';
 import { createRuntime } from './runtime/index.js';
 
 export const name = 'mdc-memory';
-export const inject = ['subprocess'];
+export const inject = ['subprocess', 'storageDomain'];
 
 /**
  * Synchronous on purpose: cordis does not await a function plugin's return
@@ -22,5 +26,13 @@ export function apply(ctx, rawConfig) {
     runtime.start();
     return () => runtime.stop();
   }, 'mdc-memory: basic-memory runtime');
-  ctx.inject(['webServer', 'connection'], (web) => registerEndpoints(web, runtimeEndpoints(runtime)));
+
+  const enablement = createEnablement();
+  ctx.effect(() => enablement.mount(ctx.storageDomain), 'mdc-memory: enablement store');
+  const knowledgeBases = createKnowledgeBases({ basicMemory: createBasicMemoryClient(runtime), enablement, logger: ctx.logger });
+
+  ctx.inject(['webServer', 'connection'], (web) => registerEndpoints(web, [
+    ...runtimeEndpoints(runtime),
+    ...knowledgeBaseEndpoints(knowledgeBases),
+  ]));
 }

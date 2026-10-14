@@ -1,6 +1,6 @@
 /**
  * Status of the managed basic-memory runtime: one immutable snapshot that the
- * pipeline advances and the HTTP API serves.
+ * pipeline advances, the HTTP API serves and subscribers observe.
  *
  * state  - 'preparing' | 'ready' | 'error'
  * stages - every pipeline stage with 'pending' | 'running' | 'done' | 'failed'
@@ -12,8 +12,10 @@
 /** @param {readonly string[]} stageIds - pipeline stage ids in run order. */
 export function createStatus(stageIds) {
   let current;
+  const listeners = new Set();
   const publish = (next) => {
     current = Object.freeze({ ...next, updatedAt: new Date().toISOString() });
+    for (const listener of [...listeners]) listener(current);
   };
   const stages = (stateOf) => stageIds.map((id) => Object.freeze({ id, state: stateOf(id) }));
   const stateOf = (id) => current.stages.find((stage) => stage.id === id)?.state;
@@ -23,6 +25,14 @@ export function createStatus(stageIds) {
 
   return {
     snapshot: () => current,
+    /**
+     * @param {(snapshot: object) => void} listener - called after every published snapshot.
+     * @returns {() => void} unsubscribes.
+     */
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
     begin,
     /** Mark `id` running; stages before it are done. */
     enter(id) {

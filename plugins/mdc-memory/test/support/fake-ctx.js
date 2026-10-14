@@ -5,14 +5,18 @@
  */
 import http from 'node:http';
 
+import { createFakeStorageDomain } from './fake-storage-domain.js';
+
 export const AUTH_HEADER = 'x-test-auth';
 
 /**
- * @param {object} services - root services, e.g. `{ subprocess }`.
+ * @param {object} rootServices - root services, e.g. `{ subprocess }`; `storageDomain`
+ *   defaults to a fresh in-memory one, as every dsh profile mounts it.
  * @param {object} [options]
  * @param {boolean} [options.web] - provide `webServer` + `connection` (web profile); default true.
  */
-export function createFakeCtx(services, { web = true } = {}) {
+export function createFakeCtx(rootServices, { web = true } = {}) {
+  const services = { storageDomain: createFakeStorageDomain(), ...rootServices };
   const disposers = [];
   const routes = new Map();
   const logs = [];
@@ -22,8 +26,12 @@ export function createFakeCtx(services, { web = true } = {}) {
     ...services,
     logger: { debug: log('debug'), info: log('info'), warn: log('warn'), error: log('error') },
     get: (name) => services[name],
+    /** Like cordis, an effect may resolve its disposer asynchronously. */
     effect(execute) {
-      const dispose = execute();
+      const result = execute();
+      const dispose = typeof result?.then === 'function'
+        ? async () => { const resolved = await result; if (typeof resolved === 'function') await resolved(); }
+        : result;
       disposers.push(dispose);
       return dispose;
     },

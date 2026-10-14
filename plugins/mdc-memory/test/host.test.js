@@ -106,6 +106,28 @@ test('runtime routes reject unauthenticated requests', async () => {
   assert.equal((await http.request('POST', '/mdc-memory/retry', { body: {}, auth: false })).status, 401);
 });
 
+test('knowledge base routes reject unauthenticated requests', async () => {
+  const { http } = await start(createFakeSubprocess(), { pythonSource: makeSource() });
+
+  assert.equal((await http.request('GET', '/mdc-memory/kbs', { auth: false })).status, 401);
+  for (const path of ['/mdc-memory/kbs/add', '/mdc-memory/kbs/delete', '/mdc-memory/kbs/set-enabled']) {
+    assert.equal((await http.request('POST', path, { body: {}, auth: false })).status, 401, path);
+  }
+});
+
+test('knowledge base routes answer 503 until basic-memory is ready', async () => {
+  const gate = createGate();
+  const subprocess = createFakeSubprocess({ uvSync: async () => { await gate.opened; return 0; } });
+  const { http } = await start(subprocess, { pythonSource: makeSource() });
+
+  const listed = await http.request('GET', '/mdc-memory/kbs');
+  const added = await http.request('POST', '/mdc-memory/kbs/add', { body: { name: 'kb', path: join(workdir, 'kb') } });
+
+  assert.deepEqual([listed.status, listed.body.code], [503, 'unavailable']);
+  assert.deepEqual([added.status, added.body.code], [503, 'unavailable']);
+  gate.open();
+});
+
 test('becomes ready with basic-memory on loopback, isolated inside dataDir', async () => {
   const subprocess = createFakeSubprocess();
   const source = makeSource();

@@ -19,7 +19,7 @@
     "cordis.patch.yml"
   ],
   "scripts": {
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test --test-concurrency=1 \"test/**/*.test.js\""
   },
   "dsh": {
     "bundle": {

@@ -95,6 +95,7 @@ export function createRuntime({ config, subprocess, logger }) {
 
   return {
     status: () => status.snapshot(),
+    onStatusChange: (listener) => status.subscribe(listener),
     start,
     /**
      * Rerun the pipeline from the first stage. A failed attempt has already
