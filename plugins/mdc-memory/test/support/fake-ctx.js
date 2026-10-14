@@ -112,3 +112,19 @@ export async function serveRoutes(routes) {
     close: () => new Promise((resolve) => server.close(resolve)),
   };
 }
+
+/**
+ * Poll the runtime status route until it reports `state`.
+ * @param {Awaited<ReturnType<typeof serveRoutes>>} http
+ * @param {'preparing' | 'ready' | 'error'} state
+ * @returns {Promise<object>} the status body.
+ */
+export async function waitForState(http, state, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const { body } = await http.request('GET', '/mdc-memory/status');
+    if (body.state === state) return body;
+    if (Date.now() > deadline) throw new Error(`status stayed ${JSON.stringify(body)} instead of ${state}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}

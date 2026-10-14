@@ -11,9 +11,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 
 import { apply } from '../host/index.js';
-import { createFakeCtx, serveRoutes } from './support/fake-ctx.js';
+import { createFakeCtx, serveRoutes, waitForState } from './support/fake-ctx.js';
 import { createFakeStorageDomain } from './support/fake-storage-domain.js';
-import { createFakeSubprocess, createGate } from './support/fake-subprocess.js';
+import { basicMemoryServer, createFakeSubprocess, createGate } from './support/fake-subprocess.js';
 import { makeSource } from './support/python-source.js';
 
 let workdir;
@@ -121,4 +121,57 @@ test('recall settings routes reject unauthenticated requests', async () => {
 
   assert.equal((await http.request('GET', '/mdc-memory/recall-settings', { auth: false })).status, 401);
   assert.equal((await http.request('POST', '/mdc-memory/recall-settings/update', { body: {}, auth: false })).status, 401);
+});
+
+const lessonHit = (name) => ({ title: name, type: 'entity', permalink: `kb/lessons/${name}`, project_id: 2, score: 0.8 });
+
+/**
+ * Answer the searches recall issues the way basic-memory tells them apart:
+ * `semantic` for the semantic search above the threshold, `hybrid` for the
+ * hybrid ranking, `outdated` for lessons marked outdated.
+ */
+const lessonSearch = ({ semantic, hybrid, outdated = [] }) => (query) => {
+  if (query.status === 'outdated') return outdated;
+  if (query.entity_types.includes('relation')) return [];
+  return query.retrieval_mode === 'vector' ? semantic : hybrid;
+};
+
+/** Start against a ready basic-memory holding one enabled knowledge base, with searches answered by `search`. */
+async function startWithLessons(search) {
+  const knowledgeBase = { id: 2, external_id: 'kb-external-id', name: 'kb', path: join(workdir, 'kb'), is_default: false };
+  const started = await start({ subprocess: createFakeSubprocess({ serve: basicMemoryServer({ projects: [knowledgeBase], search }) }) });
+  await waitForState(started.http, 'ready');
+  return started;
+}
+
+/** Titles of the lessons injected among the messages that entered the step, in order. */
+function recalledTitles(entered) {
+  const injection = entered.find((message) => message.source.kind === 'mdc-memory');
+  return [...(injection?.content[0].text ?? '').matchAll(/^\d+\. (.+)$/gm)].map(([, title]) => title);
+}
+
+test('a lesson ranked below many outdated and already injected lessons is still recalled', async () => {
+  const outdated = Array.from({ length: 40 }, (_, index) => lessonHit(`outdated-${index}`));
+  const injected = Array.from({ length: 40 }, (_, index) => lessonHit(`injected-${index}`));
+  const ranking = [...outdated, ...injected, lessonHit('current')];
+  const { fake } = await startWithLessons(lessonSearch({ semantic: ranking, hybrid: ranking, outdated }));
+  const agent = await fake.agents.create();
+  agent.session.events.push({
+    type: 'user/message',
+    data: { role: 'user', content: [], source: { kind: 'mdc-memory', lessons: injected.map((hit) => hit.permalink) } },
+  });
+
+  const entered = await fake.agents.sendUserMessage(agent, 'pip install 一直报 ReadTimeoutError，连不上 PyPI，怎么解决？');
+
+  assert.deepEqual(recalledTitles(entered), ['current']);
+});
+
+test('the hybrid ranking orders the eligible lessons, and the semantic order places those it does not rank', async () => {
+  const [first, second, third, keywordOnly] = ['first', 'second', 'third', 'keyword-only'].map(lessonHit);
+  const { fake } = await startWithLessons(lessonSearch({ semantic: [first, second, third], hybrid: [third, keywordOnly, first] }));
+  const agent = await fake.agents.create();
+
+  const entered = await fake.agents.sendUserMessage(agent, 'PowerShell 脚本里的中文字符串报解析错误');
+
+  assert.deepEqual(recalledTitles(entered), ['third', 'first', 'second']);
 });

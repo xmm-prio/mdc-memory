@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test } from 'node:test';
 
 import { apply } from '../host/index.js';
 import { memoryScopes } from './support/agent-plane.js';
-import { createFakeCtx, serveRoutes } from './support/fake-ctx.js';
+import { createFakeCtx, serveRoutes, waitForState } from './support/fake-ctx.js';
 import { basicMemoryServer, createFakeSubprocess, createGate } from './support/fake-subprocess.js';
 import { makeSource } from './support/python-source.js';
 
@@ -37,17 +37,6 @@ async function start(subprocess, config, { scopes, beforeApply } = {}) {
   const http = await serveRoutes(fake.routes);
   cleanups.push(() => http.close(), () => fake.dispose());
   return { fake, http };
-}
-
-/** Poll the status route until it reports `state`. */
-async function waitForState(http, state, timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const { body } = await http.request('GET', '/mdc-memory/status');
-    if (body.state === state) return body;
-    if (Date.now() > deadline) assert.fail(`status stayed ${JSON.stringify(body)} instead of ${state}`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
 }
 
 /** Poll until `probe` resolves to a truthy value. */

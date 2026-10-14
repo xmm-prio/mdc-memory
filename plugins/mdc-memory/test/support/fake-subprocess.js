@@ -43,20 +43,31 @@ async function model(proc) {
 }
 
 /**
- * basic-memory serve holding `projects` and offering `tools`, until
- * terminated: MCP `tools/list` lists the tools; every other request is
- * answered with the project list, as `GET /v2/projects/` would be.
- * @param {{ projects?: object[], tools?: object[] }} [state] - projects as the REST API lists them, tools as MCP lists them.
+ * basic-memory serve holding `projects`, offering `tools` and answering
+ * searches with `search`, until terminated: MCP `tools/list` lists the tools,
+ * `QUERY /v2/search/` pages through the hits `search` returns for the query;
+ * every other request is answered with the project list, as
+ * `GET /v2/projects/` would be.
+ * @param {{ projects?: object[], tools?: object[], search?: (query: object) => object[] }} [state] - projects as the
+ *   REST API lists them, tools as MCP lists them, and every hit of a search query, best first.
  * @returns {(proc: FakeProcess) => Promise<number>} the emulated program.
  */
-export function basicMemoryServer({ projects = [], tools = [] } = {}) {
+export function basicMemoryServer({ projects = [], tools = [], search = () => [] } = {}) {
   const answer = async (req) => {
-    if (req.method !== 'POST' || new URL(String(req.url), 'http://localhost').pathname !== '/mcp') {
+    const url = new URL(String(req.url), 'http://localhost');
+    const isSearch = req.method === 'QUERY' && url.pathname === '/v2/search/';
+    if (!isSearch && (req.method !== 'POST' || url.pathname !== '/mcp')) {
       return { projects, default_project: 'main' };
     }
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
-    const { id, method } = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    if (isSearch) {
+      const [page, pageSize] = ['page', 'page_size'].map((name) => Number(url.searchParams.get(name)));
+      const hits = search(body);
+      return { results: hits.slice((page - 1) * pageSize, page * pageSize), has_more: page * pageSize < hits.length };
+    }
+    const { id, method } = body;
     return method === 'tools/list'
       ? { jsonrpc: '2.0', id, result: { tools } }
       : { jsonrpc: '2.0', id, error: { code: -32601, message: `fake basic-memory does not answer ${method}` } };
