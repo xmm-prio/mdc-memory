@@ -61,6 +61,23 @@ export class BasicMemoryMcpError extends Error {
  */
 
 /**
+ * @typedef {object} SearchResult - one search hit, a note (entity), observation or relation row.
+ * @property {string} title
+ * @property {'entity' | 'observation' | 'relation'} type
+ * @property {number} score - relevance; its scale depends on the retrieval mode.
+ * @property {string | null} permalink - for a note: `<project permalink>/<path>`, unique across projects.
+ * @property {number} project_id - internal id of the project the hit belongs to.
+ * @property {string | null} [relation_type] - for a relation.
+ * @property {string | null} [to_entity] - for a relation: the target note's permalink, null until resolved.
+ */
+
+/**
+ * @typedef {object} SearchResponse
+ * @property {SearchResult[]} results - best first.
+ * @property {boolean} has_more
+ */
+
+/**
  * @typedef {object} McpTool - a tool as basic-memory's MCP `tools/list` describes it.
  * @property {string} name
  * @property {string} [description]
@@ -175,6 +192,18 @@ export function createBasicMemoryClient(runtime) {
      */
     async indexProject(externalId) {
       await send('POST', `/v2/projects/${encodeURIComponent(externalId)}/index`, { query: { run_in_background: 'true' } });
+    },
+    /**
+     * Search several projects in one ranking. basic-memory serves search on
+     * the HTTP method QUERY only.
+     * @param {object} query - a basic-memory `ScopedSearchQuery`: `SearchQuery` fields (`text`,
+     *   `retrieval_mode`, `min_similarity`, `note_types`, `entity_types`, `status`, `permalink_match`, ...)
+     *   plus `project_ids`, the internal ids of the projects to search; an empty list finds nothing.
+     * @param {{ page?: number, pageSize?: number, signal?: AbortSignal }} [options] - `pageSize` from 1 to 1000.
+     * @returns {Promise<SearchResponse>}
+     */
+    async search(query, { page = 1, pageSize = 10, signal } = {}) {
+      return send('QUERY', '/v2/search/', { query: { page: String(page), page_size: String(pageSize) }, body: query, signal });
     },
     /**
      * The project a name or permalink designates, as basic-memory itself

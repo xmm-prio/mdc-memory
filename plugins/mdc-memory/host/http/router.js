@@ -33,6 +33,26 @@ export class HttpError extends Error {
  */
 
 /**
+ * Pass every handler failure through `toHttpError`, so a module's own error
+ * types become HTTP answers at the module's API boundary.
+ * @param {(error: unknown) => unknown} toHttpError - returns the error to throw, an `HttpError` for known failures.
+ * @param {readonly Endpoint[]} endpoints
+ * @returns {Endpoint[]}
+ */
+export function mapErrors(toHttpError, endpoints) {
+  return endpoints.map((endpoint) => ({
+    ...endpoint,
+    async handle(body) {
+      try {
+        return await endpoint.handle(body);
+      } catch (error) {
+        throw toHttpError(error);
+      }
+    },
+  }));
+}
+
+/**
  * Register endpoints as exact routes owned by `web`'s plugin context.
  * @param {object} web - context carrying `webServer`, `connection` and `effect`.
  * @param {readonly Endpoint[]} endpoints

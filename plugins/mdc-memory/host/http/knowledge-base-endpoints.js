@@ -1,7 +1,7 @@
 /** HTTP API of knowledge base management for the settings UI. */
 import { BasicMemoryRequestError, BasicMemoryUnavailableError } from '../basic-memory/client.js';
 import { KnowledgeBaseError } from '../knowledge-base/errors.js';
-import { HttpError } from './router.js';
+import { HttpError, mapErrors } from './router.js';
 
 /** The settings view of a knowledge base; ids stay inside the Host. */
 const view = ({ name, path, enabled }) => ({ name, path, enabled });
@@ -11,29 +11,19 @@ const view = ({ name, path, enabled }) => ({ name, path, enabled });
  * @returns {import('./router.js').Endpoint[]}
  */
 export function knowledgeBaseEndpoints(knowledgeBases) {
-  return [
-    endpoint('GET', '/mdc-memory/kbs', async () => {
-      const [items, effective] = await Promise.all([knowledgeBases.list(), knowledgeBases.effective()]);
-      return { items: items.map(view), effective: effective.map((knowledgeBase) => knowledgeBase.name) };
-    }),
-    endpoint('POST', '/mdc-memory/kbs/add', async (body) => ({ item: view(await knowledgeBases.add(body)) })),
-    endpoint('POST', '/mdc-memory/kbs/delete', async (body) => ({ item: view(await knowledgeBases.remove(body)) })),
-    endpoint('POST', '/mdc-memory/kbs/set-enabled', async (body) => ({ item: view(await knowledgeBases.setEnabled(body)) })),
-  ];
-}
-
-function endpoint(method, path, handle) {
-  return {
-    method,
-    path,
-    async handle(body) {
-      try {
-        return await handle(body);
-      } catch (error) {
-        throw toHttpError(error);
-      }
+  return mapErrors(toHttpError, [
+    {
+      method: 'GET',
+      path: '/mdc-memory/kbs',
+      async handle() {
+        const [items, effective] = await Promise.all([knowledgeBases.list(), knowledgeBases.effective()]);
+        return { items: items.map(view), effective: effective.map((knowledgeBase) => knowledgeBase.name) };
+      },
     },
-  };
+    { method: 'POST', path: '/mdc-memory/kbs/add', handle: async (body) => ({ item: view(await knowledgeBases.add(body)) }) },
+    { method: 'POST', path: '/mdc-memory/kbs/delete', handle: async (body) => ({ item: view(await knowledgeBases.remove(body)) }) },
+    { method: 'POST', path: '/mdc-memory/kbs/set-enabled', handle: async (body) => ({ item: view(await knowledgeBases.setEnabled(body)) }) },
+  ]);
 }
 
 const STATUS_BY_CODE = Object.freeze({
