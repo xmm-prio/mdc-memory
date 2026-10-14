@@ -17,7 +17,7 @@ dsh bundle：在本机托管一个 basic-memory 进程，为 agent 提供长期�
 | `host/memory-prompt/` | 贡献之一，记忆提示词段落 |
 | `host/lesson-skill/` | 贡献之一，bundle 自带的 lesson 技能的读取与注册 |
 | `host/recall/` | 用户消息召回：召回配置、经验检索、注入消息与会话内去重 |
-| `host/storage/` | dsh 插件存储域的打开与等待（使能状态、召回配置共用） |
+| `host/storage/` | dsh 插件存储域的打开与等待（使能状态、召回配置共用），以及持久化状态共用的 `parse`/`safeParse` schema 约定（存储域与会话投影） |
 | `host/http/` | 通用 JSON 路由注册（鉴权、请求体、错误映射）、运行时接口、知识库接口和召回配置接口 |
 | `client/` | Client 插件行 `mdc-memory-ui`（包入口 `@local/mdc-memory`），设置中的 Memory 区域 |
 | `skills/lesson/` | bundle 自带的 lesson 技能（`SKILL.md`），告诉 agent 如何沉淀经验 |

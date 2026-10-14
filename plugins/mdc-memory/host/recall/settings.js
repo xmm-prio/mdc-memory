@@ -8,6 +8,7 @@
  * maxLessons    - how many lessons one recall injects at most
  */
 import { createDomainSlot } from '../storage/domain-slot.js';
+import { defineSchema } from '../storage/schema.js';
 
 /** @typedef {{ onUserMessage: boolean, minSimilarity: number, maxLessons: number }} RecallSettings */
 
@@ -54,19 +55,10 @@ function parsePatch(patch) {
 }
 
 /** Stored settings: fields missing from an older record fall back to their defaults. */
-const SETTINGS_SCHEMA = Object.freeze({
-  parse(value) {
-    if (typeof value !== 'object' || value === null) throw new TypeError('recall settings must be an object');
-    const known = Object.fromEntries(Object.keys(FIELDS).filter((field) => field in value).map((field) => [field, value[field]]));
-    return Object.freeze({ ...DEFAULT_RECALL_SETTINGS, ...parsePatch(known) });
-  },
-  safeParse(value) {
-    try {
-      return { success: true, data: this.parse(value) };
-    } catch (error) {
-      return { success: false, error };
-    }
-  },
+const SETTINGS_SCHEMA = defineSchema((value) => {
+  if (typeof value !== 'object' || value === null) throw new TypeError('recall settings must be an object');
+  const known = Object.fromEntries(Object.keys(FIELDS).filter((field) => field in value).map((field) => [field, value[field]]));
+  return Object.freeze({ ...DEFAULT_RECALL_SETTINGS, ...parsePatch(known) });
 });
 
 /** Storage domain `mdc_memory_recall`, file `<dsh home>/storages/mdc_memory_recall.json`. */

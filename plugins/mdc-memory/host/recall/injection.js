@@ -10,6 +10,8 @@
  */
 import { randomUUID } from 'node:crypto';
 
+import { defineSchema } from '../storage/schema.js';
+
 /** `source.kind` of recall messages. */
 export const RECALL_SOURCE_KIND = 'mdc-memory';
 const FENCE = 'recalled-lessons';
@@ -70,20 +72,11 @@ const EMPTY = Object.freeze({ lessons: Object.freeze([]) });
 export const INJECTED_LESSONS = Object.freeze({
   key: 'mdcMemoryRecall',
   stateVersion: 1,
-  stateSchema: Object.freeze({
-    parse(value) {
-      if (!Array.isArray(value?.lessons) || !value.lessons.every((lesson) => typeof lesson === 'string')) {
-        throw new TypeError('expected { lessons: string[] }');
-      }
-      return value;
-    },
-    safeParse(value) {
-      try {
-        return { success: true, data: this.parse(value) };
-      } catch (error) {
-        return { success: false, error };
-      }
-    },
+  stateSchema: defineSchema((value) => {
+    if (!Array.isArray(value?.lessons) || !value.lessons.every((lesson) => typeof lesson === 'string')) {
+      throw new TypeError('expected { lessons: string[] }');
+    }
+    return value;
   }),
   init: () => EMPTY,
   apply(state, event) {

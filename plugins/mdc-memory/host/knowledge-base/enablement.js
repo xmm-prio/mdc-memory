@@ -4,15 +4,11 @@
  * knowledge base name; a name without a record is enabled.
  */
 import { createDomainSlot } from '../storage/domain-slot.js';
+import { defineSchema } from '../storage/schema.js';
 
-const BOOLEAN_SCHEMA = Object.freeze({
-  parse(value) {
-    if (typeof value !== 'boolean') throw new TypeError('expected a boolean');
-    return value;
-  },
-  safeParse(value) {
-    return typeof value === 'boolean' ? { success: true, data: value } : { success: false, error: new TypeError('expected a boolean') };
-  },
+const BOOLEAN_SCHEMA = defineSchema((value) => {
+  if (typeof value !== 'boolean') throw new TypeError('expected a boolean');
+  return value;
 });
 
 /** Storage domain `mdc_memory_kb`, file `<dsh home>/storages/mdc_memory_kb.json`. */
