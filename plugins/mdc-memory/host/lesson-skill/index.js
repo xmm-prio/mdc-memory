@@ -1,8 +1,8 @@
 /**
  * The bundled `lesson` skill (skills/lesson/SKILL.md): how an agent records a
- * lesson (经验) with the memory tools. It is read once, as a runtime skill
- * registration for dsh's skill registry; upstream basic-memory skills are
- * never registered.
+ * lesson (经验) with the memory tools. It is read once and, as a contribution
+ * to the memory offer, registered in an agent's own scope in dsh's skill
+ * registry. Upstream basic-memory skills are never registered.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -13,12 +13,35 @@ const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/;
 const FIELD = /^([A-Za-z_][\w-]*):[ \t]*(.*)$/;
 
 /**
- * @returns {Readonly<{ name: string, description: string, source: 'bundled', content: string, path: string }>}
- *   the registration for `ctx.skills.register`: the frontmatter's `name` and
- *   `description`, and the instructions after the frontmatter.
+ * @returns {import('../memory-offer/index.js').Contribution & { name: string }} the contribution, and the
+ *   skill's name for the instructions that point agents to it.
  * @throws {Error} when the bundled file lacks a frontmatter `name` or `description`.
  */
-export function loadLessonSkill() {
+export function createLessonSkill() {
+  const skill = readSkill();
+  return {
+    name: skill.name,
+    /**
+     * An agent's context reaches only the services its agent loop declares,
+     * and the skill registry is not one of them, so the skill is registered
+     * from a child context that declares it; the child keeps the agent's
+     * scope. Without a skill registry nothing is registered.
+     */
+    register(agent) {
+      const fiber = agent.ctx.inject(['skills'], (scoped) => {
+        scoped.skills.register(skill);
+      });
+      return () => fiber.dispose();
+    },
+  };
+}
+
+/**
+ * @returns {Readonly<{ name: string, description: string, source: 'bundled', content: string, path: string }>}
+ *   the registration for `skills.register`: the frontmatter's `name` and
+ *   `description`, and the instructions after the frontmatter.
+ */
+function readSkill() {
   const text = readFileSync(SKILL_FILE, 'utf8');
   const frontmatter = FRONTMATTER.exec(text);
   if (frontmatter === null) throw new Error(`mdc-memory: ${SKILL_FILE} has no frontmatter`);

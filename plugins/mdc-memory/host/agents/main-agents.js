@@ -1,6 +1,6 @@
 /**
- * Main agents (主 agent): the agents a user talks to directly. Memory tools
- * and recall attach to them only; subagents never get either.
+ * Main agents (主 agent): the agents a user talks to directly. The memory
+ * offer and recall attach to them only; subagents never get either.
  *
  * A main agent is a runtime root (created without an owning agent) whose
  * session is not a subagent's: a resumed subagent session can be a runtime

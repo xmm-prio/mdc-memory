@@ -1,6 +1,6 @@
 # @local/mdc-memory
 
-dsh bundle：在本机托管一个 basic-memory 进程，为 agent 提供长期记忆（记忆工具与记忆提示词，以及用户每次给主 agent 发消息时召回相关经验），并在设置的 Memory 区域展示运行状态、管理知识库、调整召回配置。安装、升级、卸载与开发模式见仓库根目录的 `README.md`。
+dsh bundle：在本机托管一个 basic-memory 进程，为 agent 提供长期记忆（记忆工具、记忆提示词与 lesson 技能，以及用户每次给主 agent 发消息时召回相关经验），并在设置的 Memory 区域展示运行状态、管理知识库、调整召回配置。安装、升级、卸载与开发模式见仓库根目录的 `README.md`。
 
 ## 结构
 
@@ -11,8 +11,11 @@ dsh bundle：在本机托管一个 basic-memory 进程，为 agent 提供长期�
 | `host/runtime/` | 托管运行时：状态机、子进程组、隔离环境，以及 `stages/` 下的四个阶段（source、venv、model、server） |
 | `host/basic-memory/` | basic-memory 的客户端：v2 REST API 与 MCP 端点（只在运行时就绪时可用） |
 | `host/knowledge-base/` | 知识库：列表、添加、删除、使能、生效知识库计算、注册校验，以及经验 schema 笔记（`lesson-schema.md`） |
-| `host/agents/` | 主 agent 跟踪（`watchMainAgents`），供记忆工具与召回共用 |
-| `host/memory-tools/` | 记忆工具代理：上游工具目录与白名单、代理工具定义、每次调用的知识库判定、记忆提示词段落、lesson 技能的读取 |
+| `host/agents/` | 主 agent 跟踪（`watchMainAgents`），供记忆供给与召回共用 |
+| `host/memory-offer/` | 记忆供给：由生效知识库和工具目录算出供给，再把各项贡献依次注册到每个主 agent |
+| `host/memory-tools/` | 贡献之一，记忆工具代理：上游工具目录与白名单、代理工具定义、每次调用的知识库判定 |
+| `host/memory-prompt/` | 贡献之一，记忆提示词段落 |
+| `host/lesson-skill/` | 贡献之一，bundle 自带的 lesson 技能的读取与注册 |
 | `host/recall/` | 用户消息召回：召回配置、经验检索、注入消息与会话内去重 |
 | `host/storage/` | dsh 插件存储域的打开与等待（使能状态、召回配置共用） |
 | `host/http/` | 通用 JSON 路由注册（鉴权、请求体、错误映射）、运行时接口、知识库接口和召回配置接口 |
@@ -79,31 +82,40 @@ basic-memory 的配置与索引位于 `<dataDir>/config`，默认项目位于 `<
 
 ## 主 agent
 
-`host/agents/main-agents.js` 导出 `watchMainAgents(plane, attach)`，记忆工具与召回共用：对每个现有的和之后创建的主 agent 调用 `attach(agent)`，子 agent 永远不会被调用。`attach` 可以返回清理函数，在该 agent 销毁或插件卸载时（先发生者）执行一次；`attach` 抛错只记日志，不影响 agent 创建。
+`host/agents/main-agents.js` 导出 `watchMainAgents(plane, attach)`，记忆供给与召回共用：对每个现有的和之后创建的主 agent 调用 `attach(agent)`，子 agent 永远不会被调用。`attach` 可以返回清理函数，在该 agent 销毁或插件卸载时（先发生者）执行一次；`attach` 抛错只记日志，不影响 agent 创建。
 
 主 agent 的判定：运行时根 agent（`agents.roots()`，即不是经由其他 agent 创建的），且会话头的 `origin` 不是 `subagent`（恢复的子 agent 会话可能成为运行时根，但保留这个持久标记）。
 
+## 记忆供给
+
+主 agent 得到的记忆能力由三项独立的贡献组成：记忆工具、记忆提示词和 lesson 技能，各在自己的模块中实现。`host/memory-offer/` 负责把它们组合起来，流程分两步：
+
+1. 计算供给：basic-memory 就绪、至少有一个生效知识库、且工具目录不为空时，供给为生效知识库加记忆工具；否则供给为空。知识库增删、开关或 basic-memory 就绪状态变化时重新计算。
+2. 接管主 agent：供给不为空时，按记忆工具、记忆提示词、lesson 技能的顺序，把各项贡献注册在主 agent 自己的作用域上；供给为空时全部撤下。只有工具目录变化时才重新注册，开关知识库只改变提示词文字。
+
+- 每个主 agent 要么得到全部贡献，要么什么都没有：任一贡献注册失败（例如同名的提示词段落已被别的插件占用，或记忆工具全部被占用），已注册的会撤下，只记录一条带 agent id 的告警，下次供给变化时重试，其他 agent 和 dsh 不受影响。所以记忆提示词和 lesson 技能只会与记忆工具同时出现。
+- 子 agent 的作用域链不包含委派它的 agent，所以看不到任何贡献。插件加载时已经存在的主 agent 同样会被接管。进行中的会话会随设置变化即时增减；插件卸载时一并撤下。
+- 记忆供给依赖 dsh 的 `tools`、`systemPrompt` 服务，缺少时什么都不注册；lesson 技能另外需要 `skills` 服务（来自 dsh-base 的 `skill` 行，默认挂载），缺少时只是不提供技能。
+- 记忆提示词：一个常驻系统提示词段落，列出生效知识库，并说明何时读取 `lesson` 技能（见下文）。文字随生效知识库实时变化，不需要重新注册。
+
 ## 记忆工具
 
-按 ADR 0002，Host 插件把 basic-memory 的 MCP 工具代理为 dsh 原生工具，只注册给主 agent。
+按 ADR 0002，Host 插件把 basic-memory 的 MCP 工具代理为 dsh 原生工具，作为记忆供给的一项贡献注册给主 agent。
 
-- 记忆工具和记忆提示词注册在主 agent 自己的作用域上；子 agent 的作用域链不包含委派它的 agent，所以看不到。插件加载时已经存在的主 agent 同样会被接管。
-- 工具目录：basic-memory 就绪后用 MCP `tools/list` 读取上游工具，按白名单 `memoryTools` 的顺序取出其中在单个项目内工作的工具（参数里有 `project`），注册为 `memory_<上游工具名>`。上游新增的工具只需加入白名单即可暴露。白名单里上游没有的工具，以及不在单个项目内工作的工具（如 `list_memory_projects`），都不会暴露，并在日志中告警。上游工具列表不变时沿用同一组工具定义，开关知识库不会让工具重新注册。
+- 工具目录：basic-memory 就绪后用 MCP `tools/list` 读取上游工具，按白名单 `memoryTools` 的顺序取出其中在单个项目内工作的工具（参数里有 `project`），注册为 `memory_<上游工具名>`。上游新增的工具只需加入白名单即可暴露。上游工具列表不变时沿用同一组工具定义，开关知识库不会让工具重新注册。
+- 白名单只能暴露在单个项目内工作的工具。没有 `project` 参数的工具（如 `list_memory_projects`）会跨越知识库的边界，代理层无法把它限定在生效知识库内，按 ADR 0002 的设计不会暴露；白名单里写了这类工具或上游没有的工具时，只在日志中告警。
+- 主 agent 作用域里已有同名工具（被别的注册占用）时跳过该工具并告警；一个工具都注册不上时，这项贡献失败，该 agent 什么都不提供（见上文）。
 - 参数：上游用来选择项目的 `project_id`、`projects`、`search_all_projects`、`workspace` 不暴露给模型，`project` 改为可选的知识库名称。调用里出现工具没有声明的参数（包括上游的别名，如 `all_projects`）时直接拒绝。
 - 每次调用都实时读取生效知识库，再确定目标知识库：
   - 传了 `project`：必须是生效知识库（名称不区分大小写）。已关闭的知识库、不存在的名称（包括内部默认项目 `main`）都会被拒绝，错误中说明原因并列出生效知识库。
   - 没传 `project`：只有一个生效知识库时自动补全；有多个时拒绝，错误中列出可选的知识库。
   - 参数值是 `memory://` URL、且首段指向某个项目时，该项目必须就是目标知识库：指向另一个生效知识库时提示改传对应的 `project`；指向未生效的知识库或内部默认项目时拒绝。
   - 转发给 basic-memory 的调用总是带上显式的 `project`。basic-memory 报告的工具错误作为工具调用失败返回给 agent。
-- 记忆提示词：一个常驻系统提示词段落，列出生效知识库，并说明何时读取 `lesson` 技能（见下节）。段落和工具一起注册在主 agent 上，文字随生效知识库实时变化。
-- 没有生效知识库、basic-memory 未就绪或读取工具目录失败时，主 agent 上既没有记忆工具，也没有记忆提示词和 lesson 技能。进行中的会话会随设置变化即时增减；插件卸载时一并撤下。
-- 记忆工具和记忆提示词依赖 dsh 的 `tools`、`systemPrompt` 服务，缺少时都不注册；lesson 技能另外需要 `skills` 服务（来自 dsh-base 的 `skill` 行，默认挂载），缺少时只是不提供技能。
-- 向某个主 agent 注册时出错（例如同名的提示词段落已被别的插件占用），只记录一条带 agent id 的告警：该 agent 暂时什么都不提供，下次提供内容变化时重试，其他 agent 和 dsh 不受影响。
 
 ## lesson 技能
 
 - bundle 自带 `skills/lesson/SKILL.md`。Host 启动时读取它，`name`、`description` 取自 frontmatter，正文去掉 frontmatter 后作为技能内容，以 `lesson` 为名、`source: bundled` 注册到 dsh 的技能注册表。
-- 注册在主 agent 自己的作用域上，与记忆工具、记忆提示词同时出现、同时撤下；子 agent 看不到。dsh 的 agent 上下文只带 agent 循环声明的服务（`agents`、`sessions`、`llm`、`tools`、`systemPrompt`、`sessionProjections`），没有 `skills`，所以技能从 agent 上下文派生、声明了 `skills` 的子上下文注册，子上下文仍在该 agent 的作用域内。主 agent 从 dsh 的技能目录中发现它，用 `skill` 工具读取；技能目录变化时 dsh 会在下一步给会话追加新的目录。用户也可以输入 `/lesson` 直接注入。主 agent 作用域里的 `lesson` 优先于全局的同名技能（如用户目录中的技能）。
+- 作为记忆供给的一项贡献注册在主 agent 自己的作用域上，与记忆工具、记忆提示词同时出现、同时撤下；子 agent 看不到。dsh 的 agent 上下文只带 agent 循环声明的服务（`agents`、`sessions`、`llm`、`tools`、`systemPrompt`、`sessionProjections`），没有 `skills`，所以技能从 agent 上下文派生、声明了 `skills` 的子上下文注册，子上下文仍在该 agent 的作用域内。主 agent 从 dsh 的技能目录中发现它，用 `skill` 工具读取；技能目录变化时 dsh 会在下一步给会话追加新的目录。用户也可以输入 `/lesson` 直接注入。主 agent 作用域里的 `lesson` 优先于全局的同名技能（如用户目录中的技能）。
 - 不注册 basic-memory 上游自带的技能。沉淀没有自动触发：只在 agent 按技能判断值得沉淀、或用户要求时发生。
 - 技能内容：何时沉淀、多个生效知识库时如何选择、经验格式（与 `schema/lesson.md` 一致）、先检索再新建或更新、用 `supersedes` 取代旧经验、标记 `status: outdated`、经验与参考笔记的区别。
 - 技能中的示例工具调用写成 ```` ```json memory_<工具名> ```` 代码块，并以同一个坑为例前后连贯。`test/real-lesson-skill.test.js` 从 agent 读到的技能内容中取出这些调用，按顺序通过记忆工具执行，再用 basic-memory 的 `schema_validate` 校验写出的经验。修改示例时要保持它们可以照原样执行，且写出的经验没有告警。

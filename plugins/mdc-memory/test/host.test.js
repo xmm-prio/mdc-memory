@@ -280,6 +280,25 @@ test('an agent the memory offer cannot be attached to is logged and offered noth
   assert.deepEqual(rejections, []);
 });
 
+test('an agent whose scope already claims every memory tool is offered neither the section nor the lesson skill', async () => {
+  let claimed;
+  let served;
+  const { fake } = await startWithKnowledgeBase({
+    beforeApply: async (agentsOwner) => {
+      claimed = await agentsOwner.agents.create();
+      claimed.ctx.tools.register({ name: 'memory_search_notes', description: 'another plugin', parameters: { type: 'object' } });
+      served = await agentsOwner.agents.create();
+    },
+  });
+
+  await until(async () => (await fake.agents.skillNames(served)).length > 0);
+
+  assert.doesNotMatch(await fake.agents.prompt(claimed), /^## Memory$/m);
+  assert.deepEqual(await fake.agents.skillNames(claimed), []);
+  const warnings = fake.logs.filter((entry) => entry.level === 'warn').map((entry) => entry.message);
+  assert.ok(warnings.some((message) => message.includes(`memory_search_notes to agent ${claimed.id}`)), warnings.join('\n'));
+});
+
 test('without a skill registry, main agents are offered the memory tools and section but no lesson skill', async () => {
   const { fake } = await startWithKnowledgeBase({ scopes: memoryScopes({ skills: false }) });
   const agent = await fake.agents.create();

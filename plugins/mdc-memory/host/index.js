@@ -1,9 +1,9 @@
 /**
  * Host row `mdc-memory`: hosts the basic-memory process, manages knowledge
- * bases and serves both to the settings UI, offers memory tools to main
- * agents and recalls lessons when the user messages one. Wiring only; the
- * runtime, the knowledge bases, the HTTP API, the memory tools and recall
- * live in their own modules.
+ * bases and serves both to the settings UI, offers memory to main agents and
+ * recalls lessons when the user messages one. Wiring only; the runtime, the
+ * knowledge bases, the HTTP API, the memory offer with its contributions and
+ * recall live in their own modules.
  */
 import { fileURLToPath } from 'node:url';
 
@@ -16,6 +16,9 @@ import { registerEndpoints } from './http/router.js';
 import { runtimeEndpoints } from './http/runtime-endpoints.js';
 import { createEnablement } from './knowledge-base/enablement.js';
 import { createKnowledgeBases } from './knowledge-base/index.js';
+import { createLessonSkill } from './lesson-skill/index.js';
+import { createMemoryOffer } from './memory-offer/index.js';
+import { createMemoryPrompt } from './memory-prompt/index.js';
 import { createMemoryTools } from './memory-tools/index.js';
 import { createRecall } from './recall/index.js';
 import { createRecallSettings } from './recall/settings.js';
@@ -56,8 +59,15 @@ export function apply(ctx, rawConfig) {
   ]));
 
   const memoryTools = createMemoryTools({ basicMemory, knowledgeBases, whitelist: config.memoryTools, logger: ctx.logger });
-  ctx.effect(() => memoryTools.start(), 'mdc-memory: memory tools');
-  ctx.inject(['agents', 'tools', 'systemPrompt'], (plane) => watchMainAgents(plane, (agent) => memoryTools.attach(agent)));
+  const lessonSkill = createLessonSkill();
+  const memoryOffer = createMemoryOffer({
+    knowledgeBases,
+    loadTools: memoryTools.load,
+    contributions: [memoryTools, createMemoryPrompt({ lessonSkillName: lessonSkill.name }), lessonSkill],
+    logger: ctx.logger,
+  });
+  ctx.effect(() => memoryOffer.start(), 'mdc-memory: memory offer');
+  ctx.inject(['agents', 'tools', 'systemPrompt'], (plane) => watchMainAgents(plane, (agent) => memoryOffer.attach(agent)));
 
   const recall = createRecall({ basicMemory, knowledgeBases, settings: recallSettings, logger: ctx.logger });
   ctx.inject(['agents', 'sessionProjections'], (plane) => recall.mount(plane));
