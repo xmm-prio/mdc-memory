@@ -47,13 +47,20 @@ function dshPackages() {
  * service, the real `storageDomain` service persisting JSON files under
  * `storageRoot` like dsh's own `storages` directory, and dsh's tool registry,
  * system prompt and skill registry services behind an agent scopes adapter
- * (see agent-plane.js). Disposing and mounting again over the same root
- * behaves like a dsh restart.
+ * (see agent-plane.js). Agent contexts are minted as dsh's AgentLoop mints
+ * them: from a context declaring AgentLoop's own `inject` list (as far as this
+ * composition provides it), so they reach no other service, the skill
+ * registry included. Disposing and mounting again over the same root behaves
+ * like a dsh restart. dsh exits on an unhandled promise rejection (a fatal
+ * load failure), so disposing rethrows the first one raised meanwhile.
  * @param {{ storageRoot: string }} options
  * @returns {Promise<{ subprocess: object, real: object, spawned: object[], storageDomain: object, agentScopes: object, dispose: () => Promise<void> }>}
  *   `subprocess` records every spawn spec in `spawned`; `real` is the unwrapped service.
  */
 export async function realDsh({ storageRoot }) {
+  const unhandled = [];
+  const recordUnhandled = (reason) => { unhandled.push(reason); };
+  process.on('unhandledRejection', recordUnhandled);
   const pkgs = dshPackages();
   const load = (name) => import(pathToFileURL(join(pkgs, name, 'lib', 'index.js')).href);
   const { installProxyFromEnvironment } = await load('dsh-http-proxy');
@@ -74,7 +81,9 @@ export async function realDsh({ storageRoot }) {
     root.plugin((await load('dsh-skill')).default, {}),
   ];
   await Promise.all(fibers);
-  const agentPlane = await new Promise((resolve) => root.inject(['tools', 'systemPrompt', 'skills'], (ctx) => { resolve(ctx); }));
+  const { AgentLoop } = await load('dsh-agent-loop');
+  const loopServices = AgentLoop.inject.filter((name) => root.get(name) !== undefined);
+  const agentLoop = await new Promise((resolve) => root.inject(loopServices, (ctx) => { resolve(ctx); }));
   const real = root.get('subprocess');
   const spawned = [];
   return {
@@ -88,36 +97,39 @@ export async function realDsh({ storageRoot }) {
       },
     },
     storageDomain: root.get('storageDomain'),
-    agentScopes: realAgentScopes(agentPlane, systemPrompt.renderPrompt, await load('dsh-scope')),
+    agentScopes: realAgentScopes(agentLoop, root.get('skills'), systemPrompt.renderPrompt, await load('dsh-scope')),
     async dispose() {
       for (const fiber of fibers.reverse()) await fiber.dispose();
       await uninstallProxy();
+      process.off('unhandledRejection', recordUnhandled);
+      if (unhandled.length > 0) throw unhandled[0];
     },
   };
 }
 
 /**
- * Agent scopes minted by dsh-scope over dsh's real tool registry, system
- * prompt and skill registry. Skills are read the way dsh's `skill` tool reads
- * them for the calling agent: the registry viewed from the agent's scope.
+ * Agent scopes minted by dsh-scope from the AgentLoop-like context `loop`,
+ * over dsh's real tool registry and system prompt. Skills are read the way
+ * dsh's `skill` tool reads them for the calling agent: the skill registry
+ * viewed from the agent's scope.
  */
-function realAgentScopes(plane, renderPrompt, { createScope }) {
-  const assemble = (agent) => plane.systemPrompt.assemble({ scope: agent });
+function realAgentScopes(loop, skills, renderPrompt, { createScope }) {
+  const assemble = (agent) => loop.systemPrompt.assemble({ scope: agent });
   return {
-    services: { tools: plane.tools, systemPrompt: plane.systemPrompt, skills: plane.skills },
+    services: { tools: loop.tools, systemPrompt: loop.systemPrompt, skills },
     open(agent, { parent } = {}) {
-      const scope = createScope(plane, agent, parent ? { parent } : {});
+      const scope = createScope(loop, agent, parent ? { parent } : {});
       return { ctx: scope.ctx, dispose: () => scope.dispose() };
     },
     schemas: async (agent) => (await assemble(agent)).tools,
     prompt: async (agent) => renderPrompt(await assemble(agent)),
     async call(agent, name, args) {
-      const result = await plane.tools.execute({ callId: randomUUID(), name, arguments: args, agent, signal: new AbortController().signal });
+      const result = await loop.tools.execute({ callId: randomUUID(), name, arguments: args, agent, signal: new AbortController().signal });
       return { isError: result.isError, text: result.content.filter((block) => block.type === 'text').map((block) => block.text).join('\n') };
     },
     async skills(agent) {
-      return (await plane.skills.list({ scope: agent })).filter((skill) => skill.invocation.modelInvocable).map((skill) => skill.name);
+      return (await skills.list({ scope: agent })).filter((skill) => skill.invocation.modelInvocable).map((skill) => skill.name);
     },
-    skill: (agent, name) => plane.skills.get(name, { scope: agent }),
+    skill: (agent, name) => skills.get(name, { scope: agent }),
   };
 }

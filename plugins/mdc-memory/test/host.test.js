@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 
 import { apply } from '../host/index.js';
+import { memoryScopes } from './support/agent-plane.js';
 import { createFakeCtx, serveRoutes } from './support/fake-ctx.js';
 import { basicMemoryServer, createFakeSubprocess, createGate } from './support/fake-subprocess.js';
 
@@ -29,9 +30,14 @@ function makeSource(path = join(workdir, 'basic-memory')) {
   return path;
 }
 
-/** Apply the Host plugin against a fake ctx and serve its routes. */
-async function start(subprocess, config) {
-  const fake = createFakeCtx({ subprocess });
+/**
+ * Apply the Host plugin against a fake ctx and serve its routes.
+ * @param {{ scopes?: object, beforeApply?: (fake: object) => Promise<void> }} [options] - the agent scopes adapter,
+ *   and what happens before the plugin loads (e.g. creating agents).
+ */
+async function start(subprocess, config, { scopes, beforeApply } = {}) {
+  const fake = createFakeCtx({ subprocess }, { scopes });
+  await beforeApply?.(fake);
   apply(fake.ctx, { dataDir: join(workdir, 'memory'), ...config });
   const http = await serveRoutes(fake.routes);
   cleanups.push(() => http.close(), () => fake.dispose());
@@ -231,8 +237,11 @@ test('main agents are offered no memory tools, section or lesson skill while no 
   assert.deepEqual(await fake.agents.skillNames(agent), []);
 });
 
-/** Start against a basic-memory holding one enabled knowledge base and offering one memory tool. */
-async function startWithKnowledgeBase() {
+/**
+ * Start against a basic-memory holding one enabled knowledge base and offering one memory tool.
+ * @param {object} [options] - as for `start`.
+ */
+async function startWithKnowledgeBase(options) {
   const knowledgeBase = { id: 2, external_id: 'kb-external-id', name: 'kb', path: join(workdir, 'kb'), is_default: false };
   const searchNotes = {
     name: 'search_notes',
@@ -240,10 +249,52 @@ async function startWithKnowledgeBase() {
     inputSchema: { type: 'object', properties: { query: { type: 'string' }, project: { type: 'string' } } },
   };
   const subprocess = createFakeSubprocess({ serve: basicMemoryServer({ projects: [knowledgeBase], tools: [searchNotes] }) });
-  const started = await start(subprocess, { pythonSource: makeSource() });
+  const started = await start(subprocess, { pythonSource: makeSource() }, options);
   await waitForState(started.http, 'ready');
   return started;
 }
+
+/** Record this process's unhandled promise rejections for one test. */
+function captureUnhandledRejections() {
+  const reasons = [];
+  const record = (reason) => { reasons.push(reason); };
+  process.on('unhandledRejection', record);
+  cleanups.push(() => process.off('unhandledRejection', record));
+  return reasons;
+}
+
+test('an agent the memory offer cannot be attached to is logged and offered nothing, and other agents are still served', async () => {
+  const rejections = captureUnhandledRejections();
+  let blocked;
+  let served;
+  const { fake } = await startWithKnowledgeBase({
+    beforeApply: async (agentsOwner) => {
+      blocked = await agentsOwner.agents.create();
+      blocked.ctx.systemPrompt.section({ name: 'mdc-memory', order: 0, text: 'a section another plugin registered first' });
+      served = await agentsOwner.agents.create();
+    },
+  });
+
+  await until(async () => (await fake.agents.skillNames(served)).length > 0);
+
+  assert.deepEqual(await fake.agents.toolNames(served), ['memory_search_notes']);
+  assert.deepEqual(await fake.agents.toolNames(blocked), [], 'nothing is left half-registered');
+  assert.deepEqual(await fake.agents.skillNames(blocked), []);
+  const warnings = fake.logs.filter((entry) => entry.level === 'warn').map((entry) => entry.message);
+  assert.ok(warnings.some((message) => message.includes(blocked.id)), warnings.join('\n'));
+  assert.deepEqual(rejections, []);
+});
+
+test('without a skill registry, main agents are offered the memory tools and section but no lesson skill', async () => {
+  const { fake } = await startWithKnowledgeBase({ scopes: memoryScopes({ skills: false }) });
+  const agent = await fake.agents.create();
+
+  await until(async () => (await fake.agents.toolNames(agent)).length > 0);
+
+  assert.deepEqual(await fake.agents.toolNames(agent), ['memory_search_notes']);
+  assert.match(await fake.agents.prompt(agent), /^## Memory$/m);
+  assert.deepEqual(await fake.agents.skillNames(agent), []);
+});
 
 test('a main agent can discover and load the lesson skill while a knowledge base is effective', async () => {
   const { fake } = await startWithKnowledgeBase();

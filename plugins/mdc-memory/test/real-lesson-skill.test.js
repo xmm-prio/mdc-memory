@@ -60,9 +60,10 @@ describe('the lesson skill on a real basic-memory', { skip: REAL_TEST_SKIP, time
     rmSync(workdir, { recursive: true, force: true });
   });
 
-  test('a main agent discovers and loads the bundled lesson skill, and no other skill', async () => {
-    await useKnowledgeBases('经验库');
+  test('a running main agent discovers and loads the bundled lesson skill once a knowledge base is enabled, and no other skill', async () => {
     const agent = await host.fake.agents.create();
+
+    await useKnowledgeBases('经验库');
 
     await offeredLesson(agent);
 

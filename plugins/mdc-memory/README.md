@@ -97,12 +97,13 @@ basic-memory 的配置与索引位于 `<dataDir>/config`，默认项目位于 `<
   - 转发给 basic-memory 的调用总是带上显式的 `project`。basic-memory 报告的工具错误作为工具调用失败返回给 agent。
 - 记忆提示词：一个常驻系统提示词段落，列出生效知识库，并说明何时读取 `lesson` 技能（见下节）。段落和工具一起注册在主 agent 上，文字随生效知识库实时变化。
 - 没有生效知识库、basic-memory 未就绪或读取工具目录失败时，主 agent 上既没有记忆工具，也没有记忆提示词和 lesson 技能。进行中的会话会随设置变化即时增减；插件卸载时一并撤下。
-- 记忆工具、记忆提示词和 lesson 技能依赖 dsh 的 `tools`、`systemPrompt`、`skills` 服务（`skills` 来自 dsh-base 的 `skill` 行，默认挂载）；缺少任一服务时三者都不注册。
+- 记忆工具和记忆提示词依赖 dsh 的 `tools`、`systemPrompt` 服务，缺少时都不注册；lesson 技能另外需要 `skills` 服务（来自 dsh-base 的 `skill` 行，默认挂载），缺少时只是不提供技能。
+- 向某个主 agent 注册时出错（例如同名的提示词段落已被别的插件占用），只记录一条带 agent id 的告警：该 agent 暂时什么都不提供，下次提供内容变化时重试，其他 agent 和 dsh 不受影响。
 
 ## lesson 技能
 
 - bundle 自带 `skills/lesson/SKILL.md`。Host 启动时读取它，`name`、`description` 取自 frontmatter，正文去掉 frontmatter 后作为技能内容，以 `lesson` 为名、`source: bundled` 注册到 dsh 的技能注册表。
-- 注册在主 agent 自己的作用域上，与记忆工具、记忆提示词同时出现、同时撤下；子 agent 看不到。主 agent 从 dsh 的技能目录中发现它，用 `skill` 工具读取；技能目录变化时 dsh 会在下一步给会话追加新的目录。用户也可以输入 `/lesson` 直接注入。主 agent 作用域里的 `lesson` 优先于全局的同名技能（如用户目录中的技能）。
+- 注册在主 agent 自己的作用域上，与记忆工具、记忆提示词同时出现、同时撤下；子 agent 看不到。dsh 的 agent 上下文只带 agent 循环声明的服务（`agents`、`sessions`、`llm`、`tools`、`systemPrompt`、`sessionProjections`），没有 `skills`，所以技能从 agent 上下文派生、声明了 `skills` 的子上下文注册，子上下文仍在该 agent 的作用域内。主 agent 从 dsh 的技能目录中发现它，用 `skill` 工具读取；技能目录变化时 dsh 会在下一步给会话追加新的目录。用户也可以输入 `/lesson` 直接注入。主 agent 作用域里的 `lesson` 优先于全局的同名技能（如用户目录中的技能）。
 - 不注册 basic-memory 上游自带的技能。沉淀没有自动触发：只在 agent 按技能判断值得沉淀、或用户要求时发生。
 - 技能内容：何时沉淀、多个生效知识库时如何选择、经验格式（与 `schema/lesson.md` 一致）、先检索再新建或更新、用 `supersedes` 取代旧经验、标记 `status: outdated`、经验与参考笔记的区别。
 - 技能中的示例工具调用写成 ```` ```json memory_<工具名> ```` 代码块，并以同一个坑为例前后连贯。`test/real-lesson-skill.test.js` 从 agent 读到的技能内容中取出这些调用，按顺序通过记忆工具执行，再用 basic-memory 的 `schema_validate` 校验写出的经验。修改示例时要保持它们可以照原样执行，且写出的经验没有告警。
@@ -184,6 +185,6 @@ npm test
 - `test/real-lesson-skill.test.js`：通过 dsh 自带的技能注册表验证主 agent 能发现并读取 lesson 技能（且只有它）、子 agent 看不到、随最后一个知识库开关撤下和恢复；再按顺序执行技能中的示例调用（先检索、新建、再次检索后原地更新、取代、标记过时），用 basic-memory 的 `schema_validate` 确认经验没有告警，并检查 `supersedes` 关系已解析到旧经验。
 - `test/real-recall.test.js`：通过 basic-memory 的 REST 写入测试经验和参考笔记，验证召回的注入内容、过时/被取代经验与参考笔记的排除、跨知识库合并排序与来源标注、阈值/条数/开关、会话内去重、围栏与转义、无命中/无生效知识库/子 agent 不注入。
 
-假 ctx 带有一个 agent 平面（`test/support/agent-plane.js`）：测试通过它创建、销毁主 agent 和子 agent，查看每个 agent 实际拿到的工具 schema、系统提示词、技能和工具调用结果，并给 agent 发用户消息（`fake.agents.sendUserMessage`）：消息经过 `agent/pre-step` waterfall（也可用 `fake.waterfall` 直接驱动），进入 step 的消息写成会话的 `user/message` 事件，供会话投影折叠。事件分发按 agent 作用域过滤：agent 自己上下文上的监听只收到关于它的事件。快速测试用内存实现，真实进程测试换成 dsh 自带的 `dsh-tools`、`dsh-system-prompt`、`dsh-skill` 与 `dsh-scope`。快速测试中的 basic-memory 由 `test/support/fake-subprocess.js` 模拟，`basicMemoryServer` 可以让它持有知识库并提供 MCP 工具列表。
+假 ctx 带有一个 agent 平面（`test/support/agent-plane.js`）：测试通过它创建、销毁主 agent 和子 agent，查看每个 agent 实际拿到的工具 schema、系统提示词、技能和工具调用结果，并给 agent 发用户消息（`fake.agents.sendUserMessage`）：消息经过 `agent/pre-step` waterfall（也可用 `fake.waterfall` 直接驱动），进入 step 的消息写成会话的 `user/message` 事件，供会话投影折叠。事件分发按 agent 作用域过滤：agent 自己上下文上的监听只收到关于它的事件。agent 上下文与 dsh 的 agent 循环铸造的一致：只能读到 `AgentLoop.inject` 中的服务，读其他服务会像 Cordis 一样抛出 `cannot get property "<name>" without inject`，其他服务只能经 `agent.ctx.inject([...], callback)` 获得。快速测试用内存实现，真实进程测试换成 dsh 自带的 `dsh-tools`、`dsh-system-prompt`、`dsh-skill` 与 `dsh-scope`，agent 上下文从声明了真实 `AgentLoop.inject`（取本测试组合提供的部分）的上下文铸造；dsh 遇到未处理的 Promise 拒绝会退出，所以真实进程测试在关闭时如有未处理的拒绝就报错。快速测试中的 basic-memory 由 `test/support/fake-subprocess.js` 模拟，`basicMemoryServer` 可以让它持有知识库并提供 MCP 工具列表。
 
 可选环境变量见 `test/support/real-dsh.js` 文件头。

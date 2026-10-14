@@ -87,9 +87,11 @@ export function createMemoryTools({ basicMemory, knowledgeBases, whitelist, logg
     },
     /**
      * Keep one main agent's memory tools, prompt section and lesson skill in
-     * step with the offer: registered on the agent's own context while there
+     * step with the offer: registered in the agent's own scope while there
      * is something to offer, withdrawn otherwise. A tool another registration
-     * already claims in the agent's scope is skipped.
+     * already claims in the agent's scope is skipped. Any other failure stays
+     * with this agent: it is logged, the agent is offered nothing, and the
+     * next change of the offer tries again; other agents are unaffected.
      * @param {object} agent - a main agent.
      * @returns {() => void} withdraws everything from the agent.
      */
@@ -99,11 +101,8 @@ export function createMemoryTools({ basicMemory, knowledgeBases, whitelist, logg
       const withdraw = () => {
         for (const off of registered.splice(0).reverse()) off();
       };
-      const follow = () => {
-        if (current === offer.tools) return;
-        withdraw();
-        current = offer.tools;
-        for (const tool of current) {
+      const register = (tools) => {
+        for (const tool of tools) {
           try {
             registered.push(agent.ctx.tools.register(tool));
           } catch (error) {
@@ -112,7 +111,19 @@ export function createMemoryTools({ basicMemory, knowledgeBases, whitelist, logg
         }
         if (registered.length === 0) return;
         registered.push(agent.ctx.systemPrompt.section({ name: SECTION_NAME, order: SECTION_ORDER, interpolate: false, text: () => offer.prompt }));
-        registered.push(agent.ctx.skills.register(lessonSkill));
+        registered.push(registerSkill(agent, lessonSkill));
+      };
+      const follow = () => {
+        if (current === offer.tools) return;
+        current = offer.tools;
+        try {
+          withdraw();
+          register(current);
+        } catch (error) {
+          current = undefined;
+          withdraw();
+          logger.warn(`mdc-memory: could not offer memory to agent ${agent.id}; it is offered nothing until the offer changes: ${error?.stack ?? error}`);
+        }
       };
       follow();
       followers.add(follow);
@@ -122,4 +133,18 @@ export function createMemoryTools({ basicMemory, knowledgeBases, whitelist, logg
       };
     },
   };
+}
+
+/**
+ * Register a skill in the agent's own scope. An agent's context reaches only
+ * the services its agent loop declares, and the skill registry is not one of
+ * them, so the skill is registered from a child context that declares it; the
+ * child keeps the agent's scope. Without a skill registry nothing is registered.
+ * @returns {() => void} withdraws the skill.
+ */
+function registerSkill(agent, skill) {
+  const fiber = agent.ctx.inject(['skills'], (scoped) => {
+    scoped.skills.register(skill);
+  });
+  return () => fiber.dispose();
 }

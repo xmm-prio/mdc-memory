@@ -13,8 +13,14 @@
  * `realDsh().agentScopes` mounts dsh's own tool, system prompt and skill
  * services.
  *
+ * An agent's context is minted the way dsh's AgentLoop mints it: it reaches
+ * only the services AgentLoop declares (`AGENT_LOOP_INJECT`), reading any
+ * other service throws as Cordis does, and another service is reached
+ * through `agent.ctx.inject(names, callback)`, whose child context keeps the
+ * agent's scope.
+ *
  * Scopes adapter contract:
- *   services              - `{ tools, systemPrompt, skills }` provided to the plugin context
+ *   services              - `{ tools, systemPrompt, skills? }` provided to the plugin context
  *   open(agent, options)  - mint the agent's scoped context: `{ ctx, dispose }`;
  *                           `options.parent` is the enclosing scope key
  *   schemas(agent)        - tool schemas the agent's model is offered
@@ -24,6 +30,19 @@
  *   skill(agent, name)    - the skill as the agent loads it (`name`, `description`, `content`), or undefined
  */
 import { randomUUID } from 'node:crypto';
+
+/** The services dsh's AgentLoop declares (`AgentLoop.inject`), the only ones its agents' contexts reach. */
+export const AGENT_LOOP_INJECT = Object.freeze(['agents', 'sessions', 'llm', 'tools', 'systemPrompt', 'sessionProjections']);
+
+/** A context that, like a Cordis context, refuses to read a service it does not carry. */
+function strictContext(members) {
+  return new Proxy(members, {
+    get(target, property) {
+      if (typeof property === 'symbol' || property === 'then' || Object.hasOwn(target, property)) return target[property];
+      throw new Error(`cannot get property "${property}" without inject`);
+    },
+  });
+}
 
 /** Normalize what an effect's execute returned (a disposer, maybe async, or nothing) into an idempotent disposer. */
 export function disposerOf(result) {
@@ -152,8 +171,11 @@ export function createAgentPlane(scopes) {
   };
 }
 
-/** Scopes adapter keeping registrations in memory. */
-export function memoryScopes() {
+/**
+ * Scopes adapter keeping registrations in memory.
+ * @param {{ skills?: boolean }} [options] - `skills: false` composes no skill registry.
+ */
+export function memoryScopes({ skills = true } = {}) {
   const layers = new Map();
   const layerOf = (key) => {
     if (!layers.has(key)) layers.set(key, { tools: new Map(), sections: new Map(), skills: new Map() });
@@ -173,7 +195,7 @@ export function memoryScopes() {
     return {
       tools: { register: (definition) => add('tools', definition) },
       systemPrompt: { section: (section) => add('sections', section) },
-      skills: { register: (skill) => add('skills', skill) },
+      ...(skills ? { skills: { register: (skill) => add('skills', skill) } } : {}),
     };
   }
 
@@ -181,8 +203,26 @@ export function memoryScopes() {
     services: services(undefined),
     open(agent) {
       const disposers = new Set();
-      const ctx = {
-        ...services(agent, disposers),
+      const own = services(agent, disposers);
+      const ctx = strictContext({
+        ...Object.fromEntries(AGENT_LOOP_INJECT.filter((name) => name in own).map((name) => [name, own[name]])),
+        /** Like Cordis: the callback runs once every named service exists, on a child context in the agent's scope. */
+        inject(names, callback) {
+          const registrations = new Set();
+          const available = services(agent, registrations);
+          const fiber = {
+            async dispose() {
+              disposers.delete(fiber.dispose);
+              for (const off of [...registrations].reverse()) off();
+              registrations.clear();
+            },
+          };
+          disposers.add(fiber.dispose);
+          if (names.every((name) => name in available)) {
+            callback(strictContext(Object.fromEntries(names.map((name) => [name, available[name]]))));
+          }
+          return fiber;
+        },
         effect(execute) {
           let done = false;
           const cleanup = execute();
@@ -195,7 +235,7 @@ export function memoryScopes() {
           disposers.add(dispose);
           return dispose;
         },
-      };
+      });
       return {
         ctx,
         async dispose() {
