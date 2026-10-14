@@ -2,8 +2,9 @@
  * Client row `mdc-memory-ui`: the Memory section of dsh settings. It shows the
  * state of the managed basic-memory runtime served by the Host row's HTTP API
  * (preparation stages, latest progress, error with output) and offers retry,
- * and it manages the knowledge bases: list, enable switch, delete with
- * confirmation, and add (name + absolute path).
+ * it manages the knowledge bases: list, enable switch, delete with
+ * confirmation, and add (name + absolute path), and it edits the recall
+ * settings: user-message recall switch, similarity threshold, lesson count.
  */
 window.__ModuleLoader__.load({
   id: '@local/mdc-memory',
@@ -20,7 +21,12 @@ window.__ModuleLoader__.load({
     const KB_ADD_PATH = 'mdc-memory/kbs/add';
     const KB_DELETE_PATH = 'mdc-memory/kbs/delete';
     const KB_SET_ENABLED_PATH = 'mdc-memory/kbs/set-enabled';
+    const RECALL_PATH = 'mdc-memory/recall-settings';
+    const RECALL_UPDATE_PATH = 'mdc-memory/recall-settings/update';
     const POLL_MS = 2000;
+    /** Threshold choices 0.00-1.00 in steps of 0.05; integer arithmetic keeps each value equal to its literal. */
+    const THRESHOLD_STEPS = Array.from({ length: 21 }, (_, index) => (index * 5) / 100);
+    const MAX_LESSONS = 10;
     /** Error codes of the Host API that have their own message. */
     const KNOWN_ERRORS = new Set(['invalid-request', 'path-not-absolute', 'name-taken', 'name-reserved', 'path-registered', 'path-reserved', 'not-found', 'rejected', 'unavailable']);
 
@@ -75,6 +81,15 @@ window.__ModuleLoader__.load({
       error_rejected: 'basic-memory 拒绝了该操作：{message}',
       error_unavailable: 'basic-memory 尚未就绪，请稍后再试。',
       error_generic: '操作失败：{message}',
+      recallTitle: '召回',
+      recallIntro: '每次给主 agent 发消息时，从生效知识库中检索与消息相关的经验，作为参考资料提供给 agent。子 agent 不召回；同一会话中每条经验只提供一次。修改后对下一条消息生效。',
+      recallLoading: '正在读取召回配置…',
+      recallSwitch: '用户消息召回',
+      recallThreshold: '相似度阈值',
+      recallThresholdHint: '经验与消息的语义相似度达到阈值才会被召回。调高更精准，调低召回更多。',
+      recallCount: '注入条数',
+      recallCountHint: '每条消息最多提供的经验条数。',
+      recallFailed: '召回配置读取或保存失败：{message}',
     };
     const en = {
       nav: 'Memory',
@@ -127,6 +142,15 @@ window.__ModuleLoader__.load({
       error_rejected: 'basic-memory refused: {message}',
       error_unavailable: 'basic-memory is not ready yet; try again shortly.',
       error_generic: 'The operation failed: {message}',
+      recallTitle: 'Recall',
+      recallIntro: 'Each message you send to a main agent is used to look up related lessons in the effective knowledge bases, which the agent receives as reference material. Subagents get no recall, and a lesson is provided once per session. Changes apply to the next message.',
+      recallLoading: 'Loading recall settings…',
+      recallSwitch: 'Recall on user messages',
+      recallThreshold: 'Similarity threshold',
+      recallThresholdHint: 'A lesson is recalled once its semantic similarity to the message reaches the threshold. Higher is more precise, lower recalls more.',
+      recallCount: 'Lessons per message',
+      recallCountHint: 'At most this many lessons are provided per message.',
+      recallFailed: 'Could not load or save the recall settings: {message}',
     };
 
     const CSS = `
@@ -190,7 +214,14 @@ window.__ModuleLoader__.load({
 .mdcm-input{box-sizing:border-box;height:32px;padding:0 8px;font-size:14px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);outline:none}
 .mdcm-input:focus{border-color:var(--dsw-alias-state-business-primary)}
 .mdcm-hint{margin:0;font-size:12px;color:var(--dsw-alias-label-tertiary)}
-.mdcm-actions{display:flex;justify-content:flex-end;gap:8px}`;
+.mdcm-actions{display:flex;justify-content:flex-end;gap:8px}
+.mdcm-settings{display:flex;flex-direction:column}
+.mdcm-setting{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:.5px solid var(--dsw-alias-border-l2)}
+.mdcm-setting:first-child{border-top:0;padding-top:0}
+.mdcm-setting-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.mdcm-setting-name{font-size:14px}
+.mdcm-select{flex:none;width:88px;cursor:pointer}
+.mdcm-select:disabled{opacity:.5;cursor:default}`;
 
     const STAGE_MARKS = { pending: '', running: '', done: '✓', failed: '✕' };
 
@@ -445,6 +476,75 @@ window.__ModuleLoader__.load({
         }));
     }
 
+    /** The recall settings; each change is saved at once and the Host's answer replaces the shown values. */
+    function useRecallSettings() {
+      const [settings, setSettings] = useState();
+      const [error, setError] = useState();
+      const [saving, setSaving] = useState(false);
+      useEffect(() => {
+        let cancelled = false;
+        request(RECALL_PATH).then((loaded) => !cancelled && setSettings(loaded), (failure) => !cancelled && setError(failure));
+        return () => {
+          cancelled = true;
+        };
+      }, []);
+      const save = useCallback(async (change) => {
+        setSaving(true);
+        try {
+          setSettings(await post(RECALL_UPDATE_PATH, change));
+          setError(undefined);
+        } catch (failure) {
+          setError(failure);
+        } finally {
+          setSaving(false);
+        }
+      }, []);
+      return { settings, error, saving, save };
+    }
+
+    function SettingRow({ name, hint, htmlFor, children }) {
+      return h('div', { className: 'mdcm-setting' },
+        h(htmlFor ? 'label' : 'div', { className: 'mdcm-setting-text', htmlFor },
+          h('span', { className: 'mdcm-setting-name' }, name),
+          hint && h('span', { className: 'mdcm-hint' }, hint)),
+        children);
+    }
+
+    function RecallCard({ t }) {
+      const { settings, error, saving, save } = useRecallSettings();
+      const thresholdId = useId();
+      const countId = useId();
+      let body;
+      if (settings === undefined) body = !error && h('div', { className: 'mdcm-muted' }, t('recallLoading'));
+      else {
+        const thresholds = THRESHOLD_STEPS.includes(settings.minSimilarity) ? THRESHOLD_STEPS : [...THRESHOLD_STEPS, settings.minSimilarity].sort((a, b) => a - b);
+        body = h('div', { className: 'mdcm-settings' },
+          h(SettingRow, { name: t('recallSwitch') },
+            h(Switch, { checked: settings.onUserMessage, disabled: saving, label: t('recallSwitch'), onChange: (onUserMessage) => save({ onUserMessage }) })),
+          h(SettingRow, { name: t('recallThreshold'), hint: t('recallThresholdHint'), htmlFor: thresholdId },
+            h('select', {
+              id: thresholdId,
+              className: 'mdcm-input mdcm-select',
+              value: String(settings.minSimilarity),
+              disabled: saving,
+              onChange: (event) => save({ minSimilarity: Number(event.target.value) }),
+            }, thresholds.map((value) => h('option', { key: value, value: String(value) }, value.toFixed(2))))),
+          h(SettingRow, { name: t('recallCount'), hint: t('recallCountHint'), htmlFor: countId },
+            h('select', {
+              id: countId,
+              className: 'mdcm-input mdcm-select',
+              value: String(settings.maxLessons),
+              disabled: saving,
+              onChange: (event) => save({ maxLessons: Number(event.target.value) }),
+            }, Array.from({ length: MAX_LESSONS }, (_, index) => index + 1).map((count) => h('option', { key: count, value: String(count) }, String(count))))));
+      }
+      return h('div', { className: 'mdcm-card' },
+        h('h3', { className: 'mdcm-subtitle' }, t('recallTitle')),
+        h('p', { className: 'mdcm-intro' }, t('recallIntro')),
+        body,
+        error && h('div', { className: 'mdcm-error', role: 'alert' }, t('recallFailed', { message: error.message })));
+    }
+
     function MemorySection({ t }) {
       const { status, setStatus, loadError, setLoadError } = useRuntimeStatus();
       return h('section', { className: 'mdcm-section' },
@@ -455,7 +555,8 @@ window.__ModuleLoader__.load({
           ? !loadError && h('div', { className: 'mdcm-muted' }, t('loading'))
           : h(RuntimeCard, { t, status, setStatus, setLoadError }),
         loadError && h('div', { className: 'mdcm-error', role: 'alert' }, t('loadFailed', { message: loadError })),
-        h(KnowledgeBaseCard, { t, ready: status?.state === 'ready' }));
+        h(KnowledgeBaseCard, { t, ready: status?.state === 'ready' }),
+        h(RecallCard, { t }));
     }
 
     return {
