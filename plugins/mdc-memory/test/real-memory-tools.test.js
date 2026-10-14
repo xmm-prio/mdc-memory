@@ -139,6 +139,34 @@ describe('memory tools on a real basic-memory', { skip: REAL_TEST_SKIP, timeout:
     assert.match(read.text, /--python 3\.12/);
   });
 
+  test('a natural Chinese question finds the notes sharing its distinctive words by keyword search alone', async () => {
+    await useKnowledgeBases('经验库');
+    const agent = await host.fake.agents.create();
+    await offeredMemory(agent);
+    const notes = {
+      pip: { title: 'pip 安装超时', content: '- [symptom] pip install 报 ReadTimeoutError：连接 PyPI 超时\n- [fix] 配置企业代理\n' },
+      powershell: { title: 'PowerShell 中文乱码', content: '- [symptom] PowerShell 5.1 读取无 BOM 的 UTF-8 脚本时，中文字符串被当成乱码导致解析失败\n- [fix] 脚本另存为带 BOM 的 UTF-8\n' },
+    };
+    for (const note of Object.values(notes)) {
+      const written = await call(agent, 'memory_write_note', { ...note, directory: 'keyword' });
+      assert.equal(written.isError, false, written.text);
+    }
+    const questions = {
+      pip: 'pip install 一直报 ReadTimeoutError，连不上 PyPI，怎么解决？',
+      powershell: 'PowerShell 脚本里的中文字符串报解析错误',
+    };
+
+    for (const [key, query] of Object.entries(questions)) {
+      const other = key === 'pip' ? notes.powershell : notes.pip;
+      const found = await until(async () => {
+        const searched = await call(agent, 'memory_search_notes', { query, search_type: 'text' });
+        assert.equal(searched.isError, false, searched.text);
+        return searched.text.includes(notes[key].title) && searched;
+      });
+      assert.equal(found.text.includes(other.title), false, `${query}: ${found.text}`);
+    }
+  });
+
   test('with several effective knowledge bases, a call naming none is refused with the choices', async () => {
     await useKnowledgeBases('经验库', 'kb-alpha');
     const agent = await host.fake.agents.create();
