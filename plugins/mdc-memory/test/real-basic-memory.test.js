@@ -1,6 +1,7 @@
 /**
  * End-to-end: the Host plugin drives the real basic-memory source tree (the
- * repo submodule) to `ready` through dsh's own local subprocess provider.
+ * repo submodule) to `ready` through dsh's own local subprocess provider, with
+ * dsh's proxy policy installed from the environment the way the launcher does.
  *
  * Slow on first run (venv build and model download), so it is opt-in:
  *   MDC_MEMORY_REAL_TEST=1             enable
@@ -31,15 +32,49 @@ function dshPackages() {
   return join(globalRoot, '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai');
 }
 
-/** The real `subprocess` service, mounted on a bare cordis root. */
-async function realSubprocess() {
+/**
+ * The dsh process facts the Host row runs under, set up as the launcher does:
+ * the proxy policy installed from the environment (it appends dsh's loopback
+ * bypass entries, `[::1]` included, to NO_PROXY) and the real `subprocess`
+ * service on a bare cordis root. `subprocess` records every spawn spec.
+ */
+async function dshServices() {
   const pkgs = dshPackages();
   const load = (name) => import(pathToFileURL(join(pkgs, name, 'lib', 'index.js')).href);
+  const { installProxyFromEnvironment } = await load('dsh-http-proxy');
+  const uninstallProxy = await installProxyFromEnvironment(
+    { get: (name) => (process.env[name] === undefined ? undefined : { value: process.env[name] }) },
+    (message) => console.warn(`dsh proxy: ${message}`),
+  );
   const { Context } = await load('cordis');
   const root = new Context();
   const fiber = root.plugin((await load('dsh-subprocess-local')).default);
   await fiber;
-  return { subprocess: root.get('subprocess'), dispose: () => fiber.dispose() };
+  const real = root.get('subprocess');
+  const spawned = [];
+  return {
+    real,
+    spawned,
+    subprocess: {
+      resolveExecutable: (...args) => real.resolveExecutable(...args),
+      spawn(spec) {
+        spawned.push(spec);
+        return real.spawn(spec);
+      },
+    },
+    async dispose() {
+      await fiber.dispose();
+      await uninstallProxy();
+    },
+  };
+}
+
+/** Run a Python snippet to completion under `env`, as the Host's children run. */
+async function runPython(subprocess, python, code, { cwd, env }) {
+  const collect = { maxBytes: 64 * 1024 };
+  const handle = subprocess.spawn({ argv: [python, '-c', code], cwd, env, stdio: { stdin: 'ignore', stdout: collect, stderr: collect }, graceMs: 5000 });
+  const { exitCode } = await handle.done;
+  return { exitCode, output: handle.collected.stdout.readFrom(0).text + handle.collected.stderr.readFrom(0).text };
 }
 
 /** Command lines of live processes serving basic-memory on `port` (Windows only). */
@@ -74,7 +109,8 @@ test('drives the real basic-memory to ready and tears it down', { skip: !enabled
   const userState = [join(homedir(), '.basic-memory'), join(homedir(), 'basic-memory')];
   const userStateBefore = userState.map(fingerprint);
 
-  const dsh = await realSubprocess();
+  const dsh = await dshServices();
+  console.log(`NO_PROXY under the dsh proxy policy: ${process.env.NO_PROXY}`);
   const fake = createFakeCtx({ subprocess: dsh.subprocess });
   apply(fake.ctx, { pythonSource, dataDir });
   const http = await serveRoutes(fake.routes);
@@ -99,6 +135,10 @@ test('drives the real basic-memory to ready and tears it down', { skip: !enabled
     assert.ok(main.path.replaceAll('/', '\\').toLowerCase().startsWith(dataDir.toLowerCase()), `main project lives in dataDir: ${main.path}`);
     assert.ok(existsSync(join(dataDir, 'config', 'config.json')), 'basic-memory config lives in dataDir');
     assert.deepEqual(userState.map(fingerprint), userStateBefore, "user's own basic-memory state untouched");
+
+    const model = dsh.spawned.find((spec) => spec.argv[1] === '-c');
+    const httpx = await runPython(dsh.real, model.argv[0], 'import httpx; httpx.Client(); print("httpx client ok")', { cwd: dataDir, env: model.env });
+    assert.equal(httpx.exitCode, 0, `httpx rejects the model stage environment:\n${httpx.output}`);
 
     const lanAddress = Object.values(networkInterfaces()).flat().find((entry) => entry.family === 'IPv4' && !entry.internal)?.address;
     if (lanAddress) assert.equal(await connects(lanAddress, port), false, `not reachable on ${lanAddress}`);

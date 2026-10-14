@@ -39,6 +39,8 @@ profile 的 `cordis.patch.yml` 中覆盖配置会整体替换 `config`，未写�
 
 basic-memory 的配置与索引位于 `<dataDir>/config`，默认项目位于 `<dataDir>/main`，不会读写用户自己的 `~/.basic-memory`。插件卸载或 dsh 关闭时终止整个进程树。
 
+传给 Python 子进程的 `NO_PROXY` / `no_proxy` 会改写成 httpx 能解析的形式：dsh 追加的 `[::1]` 这类带方括号的 IPv6 地址改为裸地址，无法改写的条目（如 `[::1]:8080`）丢弃，其余条目按原顺序去重保留。
+
 ## HTTP 接口
 
 都需要 dsh 的浏览器登录凭据。

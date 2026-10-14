@@ -3,6 +3,7 @@
  * the process environment for each kind of child. Everything basic-memory
  * reads or writes stays under `dataDir`, never the user's ~/.basic-memory.
  */
+import { isIPv6 } from 'node:net';
 import { join } from 'node:path';
 
 export const EMBEDDING = Object.freeze({
@@ -12,6 +13,8 @@ export const EMBEDDING = Object.freeze({
 });
 
 const BASIC_MEMORY_ENV_PREFIX = 'BASIC_MEMORY_';
+/** Proxy bypass names, lowercase first: Python's urllib (read by httpx) prefers the lowercase one. */
+const NO_PROXY_NAMES = ['no_proxy', 'NO_PROXY'];
 
 /** @param {string} dataDir - absolute data directory of the plugin. */
 export function createEnvironment(dataDir) {
@@ -26,6 +29,7 @@ export function createEnvironment(dataDir) {
   });
 
   const python = () => ({
+    ...pythonProxyBypass(),
     PYTHONUNBUFFERED: '1',
     PYTHONIOENCODING: 'utf-8',
     HF_HUB_DISABLE_SYMLINKS_WARNING: '1',
@@ -52,6 +56,36 @@ export function createEnvironment(dataDir) {
       LOGFIRE_IGNORE_NO_CONFIG: '1',
     }),
   });
+}
+
+/**
+ * The inherited proxy bypass list spelled for Python HTTP clients, under both
+ * casings. httpx turns every entry into a URL pattern and cannot parse a
+ * bracketed IPv6 literal (`[::1]` fails with "Invalid port"), so such an entry
+ * is written bare; a bracketed entry with a port has no bare spelling and is
+ * dropped. Entries are deduplicated case-insensitively in their original order.
+ */
+function pythonProxyBypass() {
+  const inherited = NO_PROXY_NAMES.map((name) => process.env[name]?.trim()).find(Boolean);
+  if (inherited === undefined) return {};
+  const seen = new Set();
+  const entries = [];
+  for (const raw of inherited.split(/[,\s]+/)) {
+    const entry = pythonBypassEntry(raw);
+    if (entry === undefined || seen.has(entry.toLowerCase())) continue;
+    seen.add(entry.toLowerCase());
+    entries.push(entry);
+  }
+  const value = entries.join(',');
+  return Object.fromEntries(NO_PROXY_NAMES.map((name) => [name, value]));
+}
+
+/** @returns {string | undefined} the entry as Python clients parse it, or undefined when it has no such spelling. */
+function pythonBypassEntry(entry) {
+  if (entry === '') return undefined;
+  if (!entry.startsWith('[')) return entry;
+  const literal = /^\[([^\]]*)\]$/.exec(entry)?.[1];
+  return literal !== undefined && isIPv6(literal) ? literal : undefined;
 }
 
 /** `undefined` entries remove inherited variables from the child environment. */
