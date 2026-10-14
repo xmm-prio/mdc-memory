@@ -20,6 +20,8 @@ export function createEnvironment(dataDir) {
     dataDir,
     venv,
     python: process.platform === 'win32' ? join(venv, 'Scripts', 'python.exe') : join(venv, 'bin', 'python'),
+    /** What the venv was built from; inside the venv, so it disappears with it. */
+    venvBuild: join(venv, 'mdc-memory-build.json'),
     config: join(dataDir, 'config'),
     home: join(dataDir, 'main'),
     modelCache: join(dataDir, 'fastembed_cache'),

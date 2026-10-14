@@ -1,1 +1,5 @@
 .cursor/
+
+# Pack output and the source staged into the bundle while packing (tools/pack)
+/dist/
+/plugins/mdc-memory/python/

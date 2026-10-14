@@ -8,14 +8,14 @@ import { isAbsolute } from 'node:path';
 
 /**
  * @typedef {object} HostConfig
- * @property {string | undefined} pythonSource - absolute path of the basic-memory source tree.
+ * @property {string} pythonSource - absolute path of the basic-memory source tree; by default the one packed into the bundle.
  * @property {string} dataDir - absolute directory holding the venv, model cache and basic-memory state.
  * @property {string} python - bare PATH name or absolute path of the Python that runs `uv`.
  */
 
 /**
  * @param {unknown} raw - the row's config as written in the patch.
- * @param {{ dataDir?: string }} defaults - composition-derived defaults.
+ * @param {{ dataDir?: string, pythonSource: string }} defaults - composition- and package-derived defaults.
  * @returns {Readonly<HostConfig>}
  * @throws {TypeError} when a field has the wrong shape.
  */
@@ -23,7 +23,7 @@ export function resolveConfig(raw, defaults) {
   const input = raw ?? {};
   if (typeof input !== 'object') throw new TypeError('mdc-memory: config must be an object');
   return Object.freeze({
-    pythonSource: optionalString(input.pythonSource, 'pythonSource'),
+    pythonSource: optionalString(input.pythonSource, 'pythonSource') ?? defaults.pythonSource,
     dataDir: absolutePath(input.dataDir ?? defaults.dataDir, 'dataDir'),
     python: nonEmptyString(input.python ?? 'python', 'python'),
   });

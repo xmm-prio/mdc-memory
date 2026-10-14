@@ -92,6 +92,7 @@ test('status shows the running stage and its latest output line', async () => {
 
   assert.equal(body.state, 'preparing');
   assert.deepEqual(body.stages, [
+    { id: 'source', state: 'done' },
     { id: 'venv', state: 'running' },
     { id: 'model', state: 'pending' },
     { id: 'server', state: 'pending' },
@@ -114,12 +115,14 @@ test('becomes ready with basic-memory on loopback, isolated inside dataDir', asy
 
   const ready = await waitForState(http, 'ready');
 
-  assert.deepEqual(ready.stages.map((stage) => stage.state), ['done', 'done', 'done']);
+  assert.deepEqual(ready.stages.map((stage) => stage.state), ['done', 'done', 'done', 'done']);
   assert.equal(new URL(ready.endpoint).hostname, '127.0.0.1');
   assert.equal((await fetch(`${ready.endpoint}/v2/projects/`)).status, 200);
 
   const uv = subprocess.last('uvSync').spec;
-  assert.deepEqual(uv.argv.slice(1), ['-m', 'uv', 'sync', '--python', '3.12', '--frozen', '--no-dev']);
+  assert.deepEqual(uv.argv.slice(1), [
+    '-m', 'uv', 'sync', '--python', '3.12', '--frozen', '--no-dev', '--no-editable', '--reinstall-package', 'basic-memory',
+  ]);
   assert.equal(uv.cwd, source);
   assert.ok(isInside(uv.env.UV_PROJECT_ENVIRONMENT, dataDir));
 
@@ -159,10 +162,10 @@ test('fails open with an error status when pythonSource does not exist', async (
 
   const failed = await waitForState(http, 'error');
 
-  assert.equal(failed.error.stage, 'venv');
+  assert.equal(failed.error.stage, 'source');
   assert.match(failed.error.message, /does not exist/);
   assert.ok(failed.error.message.includes(missing));
-  assert.deepEqual(failed.stages.map((stage) => stage.state), ['failed', 'pending', 'pending']);
+  assert.deepEqual(failed.stages.map((stage) => stage.state), ['failed', 'pending', 'pending', 'pending']);
   assert.equal(subprocess.spawned.length, 0);
 });
 
@@ -180,15 +183,6 @@ test('a failing uv sync reports its exit code and output', async () => {
   assert.equal(failed.error.stage, 'venv');
   assert.match(failed.error.message, /uv sync failed \(exit code 2\)/);
   assert.match(failed.error.output, /lockfile at `uv\.lock` needs to be updated/);
-});
-
-test('fails open with an error status when pythonSource is not configured', async () => {
-  const { http } = await start(createFakeSubprocess(), {});
-
-  const failed = await waitForState(http, 'error');
-
-  assert.equal(failed.error.stage, 'venv');
-  assert.match(failed.error.message, /pythonSource is not configured/);
 });
 
 test('retry after an error reruns the pipeline to ready', async () => {
@@ -225,7 +219,7 @@ test('basic-memory exiting after ready turns the status into an error', async ()
 
   assert.equal(failed.error.stage, 'server');
   assert.match(failed.error.message, /exited unexpectedly \(exit code 3\)/);
-  assert.deepEqual(failed.stages.map((stage) => stage.state), ['done', 'done', 'failed']);
+  assert.deepEqual(failed.stages.map((stage) => stage.state), ['done', 'done', 'done', 'failed']);
 });
 
 test('disposing the plugin terminates basic-memory', async () => {
