@@ -2,8 +2,8 @@
  * Scripted stand-in for the dsh `subprocess` service. It emulates the three
  * external programs the Host runs (uv sync, the embedding model download and
  * `basic-memory serve`) and records every spawn so tests can assert on the
- * contract with those programs. Tests override a program to inject failures
- * or to hold it at a gate.
+ * contract with those programs. Tests override a program to inject failures,
+ * to hold it at a gate, or (`basicMemoryServer`) to serve knowledge bases.
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
@@ -42,24 +42,45 @@ async function model(proc) {
   return 0;
 }
 
-/** basic-memory serve: answer the REST health route until terminated. */
-async function serve(proc) {
-  const server = http.createServer((req, res) => {
-    res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ projects: [], default_project: 'main' }));
-  });
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(Number(argValue(proc.spec.argv, '--port')), argValue(proc.spec.argv, '--host'), resolve);
-  });
-  proc.stderr('INFO:     Uvicorn running');
-  await proc.terminated;
-  await new Promise((resolve) => server.close(resolve));
-  server.closeAllConnections();
-  return 1;
+/**
+ * basic-memory serve holding `projects` and offering `tools`, until
+ * terminated: MCP `tools/list` lists the tools; every other request is
+ * answered with the project list, as `GET /v2/projects/` would be.
+ * @param {{ projects?: object[], tools?: object[] }} [state] - projects as the REST API lists them, tools as MCP lists them.
+ * @returns {(proc: FakeProcess) => Promise<number>} the emulated program.
+ */
+export function basicMemoryServer({ projects = [], tools = [] } = {}) {
+  const answer = async (req) => {
+    if (req.method !== 'POST' || new URL(String(req.url), 'http://localhost').pathname !== '/mcp') {
+      return { projects, default_project: 'main' };
+    }
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const { id, method } = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    return method === 'tools/list'
+      ? { jsonrpc: '2.0', id, result: { tools } }
+      : { jsonrpc: '2.0', id, error: { code: -32601, message: `fake basic-memory does not answer ${method}` } };
+  };
+  return async (proc) => {
+    const server = http.createServer((req, res) => {
+      answer(req).then((body) => {
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify(body));
+      });
+    });
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(Number(argValue(proc.spec.argv, '--port')), argValue(proc.spec.argv, '--host'), resolve);
+    });
+    proc.stderr('INFO:     Uvicorn running');
+    await proc.terminated;
+    await new Promise((resolve) => server.close(resolve));
+    server.closeAllConnections();
+    return 1;
+  };
 }
 
-const DEFAULT_PROGRAMS = { uvSync, model, serve };
+const DEFAULT_PROGRAMS = { uvSync, model, serve: basicMemoryServer() };
 
 class FakeProcess {
   constructor(spec, program) {

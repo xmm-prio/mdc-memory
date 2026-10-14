@@ -4,15 +4,18 @@
  * an agent can see comes from a scopes adapter: `memoryScopes()` keeps
  * registrations in memory under dsh's visibility rule (an agent sees global
  * registrations and its own, never those of the agent that delegated to it);
- * `realDsh().agentScopes` mounts dsh's own tool and system prompt services.
+ * `realDsh().agentScopes` mounts dsh's own tool, system prompt and skill
+ * services.
  *
  * Scopes adapter contract:
- *   services              - `{ tools, systemPrompt }` provided to the plugin context
+ *   services              - `{ tools, systemPrompt, skills }` provided to the plugin context
  *   open(agent, options)  - mint the agent's scoped context: `{ ctx, dispose }`;
  *                           `options.parent` is the enclosing scope key
  *   schemas(agent)        - tool schemas the agent's model is offered
  *   prompt(agent)         - the agent's rendered system prompt
  *   call(agent, name, args) - run a tool call as the agent: `{ isError, text }`
+ *   skills(agent)         - names of the skills the agent's model can discover
+ *   skill(agent, name)    - the skill as the agent loads it (`name`, `description`, `content`), or undefined
  */
 import { randomUUID } from 'node:crypto';
 
@@ -64,6 +67,12 @@ export function createAgentPlane(scopes, emit) {
     },
     prompt: (agent) => scopes.prompt(agent),
     call: (agent, name, args) => scopes.call(agent, name, args),
+    /** @returns {Promise<string[]>} names of the skills the agent's model can discover. */
+    async skillNames(agent) {
+      return (await scopes.skills(agent)).sort();
+    },
+    /** @returns {Promise<object | undefined>} the skill as the agent loads it. */
+    loadSkill: (agent, name) => scopes.skill(agent, name),
   };
 }
 
@@ -71,7 +80,7 @@ export function createAgentPlane(scopes, emit) {
 export function memoryScopes() {
   const layers = new Map();
   const layerOf = (key) => {
-    if (!layers.has(key)) layers.set(key, { tools: new Map(), sections: new Map() });
+    if (!layers.has(key)) layers.set(key, { tools: new Map(), sections: new Map(), skills: new Map() });
     return layers.get(key);
   };
   const visible = (agent, kind) => [...layerOf(undefined)[kind].values(), ...layerOf(agent)[kind].values()];
@@ -88,6 +97,7 @@ export function memoryScopes() {
     return {
       tools: { register: (definition) => add('tools', definition) },
       systemPrompt: { section: (section) => add('sections', section) },
+      skills: { register: (skill) => add('skills', skill) },
     };
   }
 
@@ -136,6 +146,12 @@ export function memoryScopes() {
       } catch (error) {
         return { isError: true, text: `Error: ${error.message}` };
       }
+    },
+    async skills(agent) {
+      return visible(agent, 'skills').map((skill) => skill.name);
+    },
+    async skill(agent, name) {
+      return visible(agent, 'skills').find((skill) => skill.name === name);
     },
   };
 }

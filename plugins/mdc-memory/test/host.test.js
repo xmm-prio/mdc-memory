@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test } from 'node:test';
 
 import { apply } from '../host/index.js';
 import { createFakeCtx, serveRoutes } from './support/fake-ctx.js';
-import { createFakeSubprocess, createGate } from './support/fake-subprocess.js';
+import { basicMemoryServer, createFakeSubprocess, createGate } from './support/fake-subprocess.js';
 
 let workdir;
 let cleanups;
@@ -206,7 +206,7 @@ test('rejects a memory tool whitelist that is not a list of tool names', () => {
   assert.throws(() => apply(fake.ctx, { dataDir, memoryTools: ['search notes'] }), /memoryTools must be a list of tool names/);
 });
 
-test('main agents are offered no memory tools while basic-memory is preparing', async () => {
+test('main agents are offered no memory tools, section or lesson skill while basic-memory is preparing', async () => {
   const gate = createGate();
   const subprocess = createFakeSubprocess({ uvSync: async () => { await gate.opened; return 0; } });
   const { fake } = await start(subprocess, { pythonSource: makeSource() });
@@ -215,10 +215,11 @@ test('main agents are offered no memory tools while basic-memory is preparing', 
 
   assert.deepEqual(await fake.agents.toolNames(agent), []);
   assert.equal(await fake.agents.prompt(agent), '');
+  assert.deepEqual(await fake.agents.skillNames(agent), []);
   gate.open();
 });
 
-test('main agents are offered no memory tools while no knowledge base exists', async () => {
+test('main agents are offered no memory tools, section or lesson skill while no knowledge base exists', async () => {
   const { fake, http } = await start(createFakeSubprocess(), { pythonSource: makeSource() });
   await waitForState(http, 'ready');
 
@@ -227,6 +228,68 @@ test('main agents are offered no memory tools while no knowledge base exists', a
 
   assert.deepEqual(await fake.agents.toolNames(agent), []);
   assert.equal(await fake.agents.prompt(agent), '');
+  assert.deepEqual(await fake.agents.skillNames(agent), []);
+});
+
+/** Start against a basic-memory holding one enabled knowledge base and offering one memory tool. */
+async function startWithKnowledgeBase() {
+  const knowledgeBase = { id: 2, external_id: 'kb-external-id', name: 'kb', path: join(workdir, 'kb'), is_default: false };
+  const searchNotes = {
+    name: 'search_notes',
+    description: 'Search notes.',
+    inputSchema: { type: 'object', properties: { query: { type: 'string' }, project: { type: 'string' } } },
+  };
+  const subprocess = createFakeSubprocess({ serve: basicMemoryServer({ projects: [knowledgeBase], tools: [searchNotes] }) });
+  const started = await start(subprocess, { pythonSource: makeSource() });
+  await waitForState(started.http, 'ready');
+  return started;
+}
+
+test('a main agent can discover and load the lesson skill while a knowledge base is effective', async () => {
+  const { fake } = await startWithKnowledgeBase();
+  const agent = await fake.agents.create();
+
+  await until(async () => (await fake.agents.skillNames(agent)).length > 0);
+
+  assert.deepEqual(await fake.agents.skillNames(agent), ['lesson']);
+  const skill = await fake.agents.loadSkill(agent, 'lesson');
+  assert.equal(skill.name, 'lesson');
+  assert.match(skill.description, /type: lesson/);
+  assert.match(skill.content, /^# /, 'instructions start after the frontmatter');
+  assert.doesNotMatch(skill.content, /^name: lesson$/m);
+  assert.match(skill.content, /memory_write_note/);
+});
+
+test('subagents are offered no lesson skill', async () => {
+  const { fake } = await startWithKnowledgeBase();
+  const main = await fake.agents.create();
+  await until(async () => (await fake.agents.skillNames(main)).length > 0);
+
+  const delegated = await fake.agents.create({ parent: main });
+  const resumedChild = await fake.agents.create({ origin: 'subagent' });
+
+  for (const agent of [delegated, resumedChild]) {
+    assert.deepEqual(await fake.agents.skillNames(agent), []);
+    assert.equal(await fake.agents.loadSkill(agent, 'lesson'), undefined);
+  }
+});
+
+test('the lesson skill leaves and returns with the memory tools as the last knowledge base is turned off and on', async () => {
+  const { fake, http } = await startWithKnowledgeBase();
+  const agent = await fake.agents.create();
+  await until(async () => (await fake.agents.skillNames(agent)).length > 0);
+  const setEnabled = async (enabled) => {
+    const set = await http.request('POST', '/mdc-memory/kbs/set-enabled', { body: { name: 'kb', enabled } });
+    assert.equal(set.status, 200, JSON.stringify(set.body));
+  };
+
+  await setEnabled(false);
+  await until(async () => (await fake.agents.toolNames(agent)).length === 0);
+
+  assert.deepEqual(await fake.agents.skillNames(agent), []);
+  await setEnabled(true);
+  await until(async () => (await fake.agents.toolNames(agent)).length > 0);
+  assert.deepEqual(await fake.agents.skillNames(agent), ['lesson']);
 });
 
 /** Set environment variables of this process for one test. */

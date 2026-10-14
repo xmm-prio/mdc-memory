@@ -42,12 +42,12 @@ function makeSource(root) {
 
 /**
  * A copy of the Host row laid out like an installed tarball: the package
- * root holds host/ and, when packaged, the python/ source beside it.
+ * root holds host/ and skills/ and, when packaged, the python/ source beside them.
  */
 async function installBundle({ packaged }) {
   const root = join(workdir, 'node_modules', '@local', 'mdc-memory');
   cpSync(join(BUNDLE, 'package.json'), join(root, 'package.json'));
-  cpSync(join(BUNDLE, 'host'), join(root, 'host'), { recursive: true });
+  for (const dir of ['host', 'skills']) cpSync(join(BUNDLE, dir), join(root, dir), { recursive: true });
   if (packaged) makeSource(join(root, 'python'));
   const { apply } = await import(pathToFileURL(join(root, 'host', 'index.js')).href);
   return { root, apply };

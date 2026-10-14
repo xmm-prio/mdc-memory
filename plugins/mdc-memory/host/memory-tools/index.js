@@ -1,12 +1,14 @@
 /**
  * Memory tools (ADR 0002): basic-memory's MCP tools offered to main agents as
- * native dsh tools, scoped to the effective knowledge bases, together with a
- * resident system prompt section that lists those knowledge bases. Agents are
- * offered both only while basic-memory is ready and at least one knowledge
- * base is effective; otherwise they are offered nothing.
+ * native dsh tools, scoped to the effective knowledge bases, together with
+ * what tells agents how to use them: a resident system prompt section that
+ * lists those knowledge bases, and the bundled `lesson` skill. Agents are
+ * offered all of it only while basic-memory is ready and at least one
+ * knowledge base is effective; otherwise they are offered nothing.
  */
 import { BasicMemoryUnavailableError } from '../basic-memory/client.js';
 import { createCatalog } from './catalog.js';
+import { loadLessonSkill } from './lesson-skill.js';
 import { renderMemorySection } from './prompt.js';
 import { createTargetResolver } from './target.js';
 
@@ -25,6 +27,7 @@ const NOTHING = Object.freeze({ tools: Object.freeze([]), prompt: '' });
  * @param {object} deps.logger - the plugin logger.
  */
 export function createMemoryTools({ basicMemory, knowledgeBases, whitelist, logger }) {
+  const lessonSkill = loadLessonSkill();
   const target = createTargetResolver({ knowledgeBases, basicMemory });
   const catalog = createCatalog({ basicMemory, whitelist, target, logger });
   const followers = new Set();
@@ -43,7 +46,7 @@ export function createMemoryTools({ basicMemory, knowledgeBases, whitelist, logg
     }
     if (effective.length === 0) return NOTHING;
     const tools = await catalog.load();
-    return tools.length === 0 ? NOTHING : { tools, prompt: renderMemorySection(effective) };
+    return tools.length === 0 ? NOTHING : { tools, prompt: renderMemorySection(effective, lessonSkill) };
   }
 
   function publish(next) {
@@ -83,10 +86,10 @@ export function createMemoryTools({ basicMemory, knowledgeBases, whitelist, logg
       };
     },
     /**
-     * Keep one main agent's memory tools and prompt section in step with the
-     * offer: registered on the agent's own context while there is something
-     * to offer, withdrawn otherwise. A tool another registration already
-     * claims in the agent's scope is skipped.
+     * Keep one main agent's memory tools, prompt section and lesson skill in
+     * step with the offer: registered on the agent's own context while there
+     * is something to offer, withdrawn otherwise. A tool another registration
+     * already claims in the agent's scope is skipped.
      * @param {object} agent - a main agent.
      * @returns {() => void} withdraws everything from the agent.
      */
@@ -109,6 +112,7 @@ export function createMemoryTools({ basicMemory, knowledgeBases, whitelist, logg
         }
         if (registered.length === 0) return;
         registered.push(agent.ctx.systemPrompt.section({ name: SECTION_NAME, order: SECTION_ORDER, interpolate: false, text: () => offer.prompt }));
+        registered.push(agent.ctx.skills.register(lessonSkill));
       };
       follow();
       followers.add(follow);

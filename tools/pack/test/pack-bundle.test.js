@@ -105,6 +105,7 @@ test('the tarball ships the basic-memory build inputs under python/ and nothing 
   ]);
   assert.ok(entries.includes('package/package.json'));
   assert.ok(entries.includes('package/host/index.js'));
+  assert.ok(entries.includes('package/skills/lesson/SKILL.md'));
   assert.ok(entries.includes('package/cordis.patch.yml'));
   assert.ok(!entries.some((entry) => entry.startsWith('package/test/')), 'bundle tests stay out');
   assert.equal(existsSync(join(bundle, 'python')), false, 'no staged source is left in the bundle');

@@ -45,10 +45,10 @@ function dshPackages() {
  * the proxy policy installed from the environment (it appends dsh's loopback
  * bypass entries, `[::1]` included, to NO_PROXY), the real `subprocess`
  * service, the real `storageDomain` service persisting JSON files under
- * `storageRoot` like dsh's own `storages` directory, and dsh's tool registry
- * and system prompt services behind an agent scopes adapter (see
- * agent-plane.js). Disposing and mounting again over the same root behaves
- * like a dsh restart.
+ * `storageRoot` like dsh's own `storages` directory, and dsh's tool registry,
+ * system prompt and skill registry services behind an agent scopes adapter
+ * (see agent-plane.js). Disposing and mounting again over the same root
+ * behaves like a dsh restart.
  * @param {{ storageRoot: string }} options
  * @returns {Promise<{ subprocess: object, real: object, spawned: object[], storageDomain: object, agentScopes: object, dispose: () => Promise<void> }>}
  *   `subprocess` records every spawn spec in `spawned`; `real` is the unwrapped service.
@@ -71,9 +71,10 @@ export async function realDsh({ storageRoot }) {
     root.plugin(await load('dsh-storage-domain'), { backend: 'json' }),
     root.plugin(systemPrompt.default, {}),
     root.plugin((await load('dsh-tools')).default, {}),
+    root.plugin((await load('dsh-skill')).default, {}),
   ];
   await Promise.all(fibers);
-  const agentPlane = await new Promise((resolve) => root.inject(['tools', 'systemPrompt'], (ctx) => { resolve(ctx); }));
+  const agentPlane = await new Promise((resolve) => root.inject(['tools', 'systemPrompt', 'skills'], (ctx) => { resolve(ctx); }));
   const real = root.get('subprocess');
   const spawned = [];
   return {
@@ -95,11 +96,15 @@ export async function realDsh({ storageRoot }) {
   };
 }
 
-/** Agent scopes minted by dsh-scope over dsh's real tool registry and system prompt. */
+/**
+ * Agent scopes minted by dsh-scope over dsh's real tool registry, system
+ * prompt and skill registry. Skills are read the way dsh's `skill` tool reads
+ * them for the calling agent: the registry viewed from the agent's scope.
+ */
 function realAgentScopes(plane, renderPrompt, { createScope }) {
   const assemble = (agent) => plane.systemPrompt.assemble({ scope: agent });
   return {
-    services: { tools: plane.tools, systemPrompt: plane.systemPrompt },
+    services: { tools: plane.tools, systemPrompt: plane.systemPrompt, skills: plane.skills },
     open(agent, { parent } = {}) {
       const scope = createScope(plane, agent, parent ? { parent } : {});
       return { ctx: scope.ctx, dispose: () => scope.dispose() };
@@ -110,5 +115,9 @@ function realAgentScopes(plane, renderPrompt, { createScope }) {
       const result = await plane.tools.execute({ callId: randomUUID(), name, arguments: args, agent, signal: new AbortController().signal });
       return { isError: result.isError, text: result.content.filter((block) => block.type === 'text').map((block) => block.text).join('\n') };
     },
+    async skills(agent) {
+      return (await plane.skills.list({ scope: agent })).filter((skill) => skill.invocation.modelInvocable).map((skill) => skill.name);
+    },
+    skill: (agent, name) => plane.skills.get(name, { scope: agent }),
   };
 }

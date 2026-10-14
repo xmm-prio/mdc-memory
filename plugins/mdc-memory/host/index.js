@@ -50,5 +50,5 @@ export function apply(ctx, rawConfig) {
 
   const memoryTools = createMemoryTools({ basicMemory, knowledgeBases, whitelist: config.memoryTools, logger: ctx.logger });
   ctx.effect(() => memoryTools.start(), 'mdc-memory: memory tools');
-  ctx.inject(['agents', 'tools', 'systemPrompt'], (plane) => watchMainAgents(plane, (agent) => memoryTools.attach(agent)));
+  ctx.inject(['agents', 'tools', 'systemPrompt', 'skills'], (plane) => watchMainAgents(plane, (agent) => memoryTools.attach(agent)));
 }

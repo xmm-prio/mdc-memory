@@ -15,6 +15,7 @@
     "index.js",
     "host/",
     "client/",
+    "skills/",
     "locale/*.json",
     "cordis.patch.yml",
     "python/"
