@@ -1,0 +1,4 @@
+[submodule "vendor/basic-memory"]
+	path = vendor/basic-memory
+	url = https://github.com/xmm-prio/basic-memory.git
+	branch = dsh
