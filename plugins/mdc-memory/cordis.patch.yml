@@ -1,10 +1,10 @@
 # Host row via the subpath export, Client row via the bare package name: two
 # distinct specifiers, so the Host entry is applied once and the Client entry
-# is recognized as the browser half.
+# is recognized as the browser half. Config defaults live in host/config.js
+# and host/index.js.
 - insert:
     - id: mdc-memory
       name: '@local/mdc-memory/host'
-      config:
-        dataDir: !!js dshHomePath('memory')
+      config: {}
     - id: mdc-memory-ui
       name: '@local/mdc-memory'

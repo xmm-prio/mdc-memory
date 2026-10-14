@@ -95,7 +95,7 @@ dsh plugin --profile web remove @local/mdc-memory
 
 说明：
 
-- 用户 patch 中的 `config` 会整体替换 bundle 的默认配置，没写的字段（如 `dataDir`）由插件代码补默认值，所以只写 `pythonSource` 即可。
+- 所有配置项的默认值都在插件代码中（bundle 的 patch 不带配置），patch 中没写的字段（如 `dataDir`）使用默认值，所以只写 `pythonSource` 即可。
 - 开发 Host 或 Web UI 的 JS 代码时，可以直接安装 bundle 目录：`dsh plugin --profile web add C:\path\to\mdc-memory\plugins\mdc-memory`。这种安装方式没有打包的 `python/` 目录，必须同时配置上面的 `pythonSource`。修改 JS 后需要重启 dsh 才会加载。
 - 回到正常安装时，删除 patch 中的这段配置，按“安装”一节打包并 add。
 
