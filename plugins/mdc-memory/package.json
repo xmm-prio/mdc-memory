@@ -16,7 +16,8 @@
     "host/",
     "client/",
     "locale/*.json",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "python/"
   ],
   "scripts": {
     "test": "node --test --test-concurrency=1 \"test/**/*.test.js\""

@@ -1,0 +1,9 @@
+{
+  "name": "mdc-memory-workspace",
+  "private": true,
+  "description": "Workspace of the mdc-memory dsh bundle: the bundle, the vendored basic-memory fork and the tooling that packs them.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 \"tools/**/*.test.js\" \"plugins/*/test/**/*.test.js\""
+  }
+}

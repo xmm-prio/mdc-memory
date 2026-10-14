@@ -40,14 +40,24 @@ function dshPackages() {
 }
 
 /**
- * The real `subprocess` and `storageDomain` services, the latter persisting
- * JSON files under `storageRoot` like dsh's own `storages` directory.
- * Disposing and mounting again over the same root behaves like a dsh restart.
+ * The dsh process facts the Host row runs under, set up as the launcher does:
+ * the proxy policy installed from the environment (it appends dsh's loopback
+ * bypass entries, `[::1]` included, to NO_PROXY), the real `subprocess`
+ * service, and the real `storageDomain` service persisting JSON files under
+ * `storageRoot` like dsh's own `storages` directory. Disposing and mounting
+ * again over the same root behaves like a dsh restart.
  * @param {{ storageRoot: string }} options
+ * @returns {Promise<{ subprocess: object, real: object, spawned: object[], storageDomain: object, dispose: () => Promise<void> }>}
+ *   `subprocess` records every spawn spec in `spawned`; `real` is the unwrapped service.
  */
 export async function realDsh({ storageRoot }) {
   const pkgs = dshPackages();
   const load = (name) => import(pathToFileURL(join(pkgs, name, 'lib', 'index.js')).href);
+  const { installProxyFromEnvironment } = await load('dsh-http-proxy');
+  const uninstallProxy = await installProxyFromEnvironment(
+    { get: (name) => (process.env[name] === undefined ? undefined : { value: process.env[name] }) },
+    (message) => console.warn(`dsh proxy: ${message}`),
+  );
   const { Context } = await load('cordis');
   const root = new Context();
   const fibers = [
@@ -57,11 +67,22 @@ export async function realDsh({ storageRoot }) {
     root.plugin(await load('dsh-storage-domain'), { backend: 'json' }),
   ];
   await Promise.all(fibers);
+  const real = root.get('subprocess');
+  const spawned = [];
   return {
-    subprocess: root.get('subprocess'),
+    real,
+    spawned,
+    subprocess: {
+      resolveExecutable: (...args) => real.resolveExecutable(...args),
+      spawn(spec) {
+        spawned.push(spec);
+        return real.spawn(spec);
+      },
+    },
     storageDomain: root.get('storageDomain'),
     async dispose() {
       for (const fiber of fibers.reverse()) await fiber.dispose();
+      await uninstallProxy();
     },
   };
 }

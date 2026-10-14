@@ -92,6 +92,7 @@ test('status shows the running stage and its latest output line', async () => {
 
   assert.equal(body.state, 'preparing');
   assert.deepEqual(body.stages, [
+    { id: 'source', state: 'done' },
     { id: 'venv', state: 'running' },
     { id: 'model', state: 'pending' },
     { id: 'server', state: 'pending' },
@@ -136,12 +137,14 @@ test('becomes ready with basic-memory on loopback, isolated inside dataDir', asy
 
   const ready = await waitForState(http, 'ready');
 
-  assert.deepEqual(ready.stages.map((stage) => stage.state), ['done', 'done', 'done']);
+  assert.deepEqual(ready.stages.map((stage) => stage.state), ['done', 'done', 'done', 'done']);
   assert.equal(new URL(ready.endpoint).hostname, '127.0.0.1');
   assert.equal((await fetch(`${ready.endpoint}/v2/projects/`)).status, 200);
 
   const uv = subprocess.last('uvSync').spec;
-  assert.deepEqual(uv.argv.slice(1), ['-m', 'uv', 'sync', '--python', '3.12', '--frozen', '--no-dev']);
+  assert.deepEqual(uv.argv.slice(1), [
+    '-m', 'uv', 'sync', '--python', '3.12', '--frozen', '--no-dev', '--no-editable', '--reinstall-package', 'basic-memory',
+  ]);
   assert.equal(uv.cwd, source);
   assert.ok(isInside(uv.env.UV_PROJECT_ENVIRONMENT, dataDir));
 
@@ -160,6 +163,46 @@ test('becomes ready with basic-memory on loopback, isolated inside dataDir', asy
   const cacheDir = serve.env.BASIC_MEMORY_SEMANTIC_EMBEDDING_CACHE_DIR;
   assert.ok(isInside(cacheDir, dataDir));
   assert.ok(model.argv.includes(cacheDir), 'model is pre-downloaded into the cache the server reads');
+});
+
+/** Set environment variables of this process for one test. */
+function setEnv(values) {
+  const previous = Object.fromEntries(Object.keys(values).map((name) => [name, process.env[name]]));
+  const assign = (entries) => {
+    for (const [name, value] of Object.entries(entries)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  };
+  assign(values);
+  cleanups.push(() => assign(previous));
+}
+
+test('proxy bypass lists reach Python children in a form httpx can parse', async () => {
+  // What the dsh launcher leaves in the environment: its loopback entries, bare and bracketed.
+  const inherited = 'localhost,127.0.0.1,.corp.example ::1,[::1],[fe80::1],[::1]:8080,LOCALHOST,*.svc';
+  setEnv({ NO_PROXY: inherited, no_proxy: inherited });
+  const subprocess = createFakeSubprocess();
+  const { http } = await start(subprocess, { pythonSource: makeSource() });
+
+  await waitForState(http, 'ready');
+
+  for (const program of ['model', 'serve']) {
+    const { env } = subprocess.last(program).spec;
+    assert.equal(env.NO_PROXY, 'localhost,127.0.0.1,.corp.example,::1,fe80::1,*.svc', program);
+    assert.equal(env.no_proxy, env.NO_PROXY, program);
+  }
+});
+
+test('Python children get no proxy bypass list when none is inherited', async () => {
+  setEnv({ NO_PROXY: undefined, no_proxy: undefined });
+  const subprocess = createFakeSubprocess();
+  const { http } = await start(subprocess, { pythonSource: makeSource() });
+
+  await waitForState(http, 'ready');
+
+  const { env } = subprocess.last('serve').spec;
+  assert.equal(Object.keys(env).some((name) => name.toUpperCase() === 'NO_PROXY'), false);
 });
 
 test('dataDir falls back to dshHomePath("memory") when a user patch replaces the config', async () => {
@@ -181,10 +224,10 @@ test('fails open with an error status when pythonSource does not exist', async (
 
   const failed = await waitForState(http, 'error');
 
-  assert.equal(failed.error.stage, 'venv');
+  assert.equal(failed.error.stage, 'source');
   assert.match(failed.error.message, /does not exist/);
   assert.ok(failed.error.message.includes(missing));
-  assert.deepEqual(failed.stages.map((stage) => stage.state), ['failed', 'pending', 'pending']);
+  assert.deepEqual(failed.stages.map((stage) => stage.state), ['failed', 'pending', 'pending', 'pending']);
   assert.equal(subprocess.spawned.length, 0);
 });
 
@@ -202,15 +245,6 @@ test('a failing uv sync reports its exit code and output', async () => {
   assert.equal(failed.error.stage, 'venv');
   assert.match(failed.error.message, /uv sync failed \(exit code 2\)/);
   assert.match(failed.error.output, /lockfile at `uv\.lock` needs to be updated/);
-});
-
-test('fails open with an error status when pythonSource is not configured', async () => {
-  const { http } = await start(createFakeSubprocess(), {});
-
-  const failed = await waitForState(http, 'error');
-
-  assert.equal(failed.error.stage, 'venv');
-  assert.match(failed.error.message, /pythonSource is not configured/);
 });
 
 test('retry after an error reruns the pipeline to ready', async () => {
@@ -247,7 +281,7 @@ test('basic-memory exiting after ready turns the status into an error', async ()
 
   assert.equal(failed.error.stage, 'server');
   assert.match(failed.error.message, /exited unexpectedly \(exit code 3\)/);
-  assert.deepEqual(failed.stages.map((stage) => stage.state), ['done', 'done', 'failed']);
+  assert.deepEqual(failed.stages.map((stage) => stage.state), ['done', 'done', 'done', 'failed']);
 });
 
 test('disposing the plugin terminates basic-memory', async () => {

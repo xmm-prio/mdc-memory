@@ -3,6 +3,8 @@
  * bases and serves both to the settings UI. Wiring only; the runtime, the
  * knowledge bases and the HTTP API live in their own modules.
  */
+import { fileURLToPath } from 'node:url';
+
 import { createBasicMemoryClient } from './basic-memory/client.js';
 import { resolveConfig } from './config.js';
 import { knowledgeBaseEndpoints } from './http/knowledge-base-endpoints.js';
@@ -15,12 +17,18 @@ import { createRuntime } from './runtime/index.js';
 export const name = 'mdc-memory';
 export const inject = ['subprocess', 'storageDomain'];
 
+/** The basic-memory source tools/pack stages into the bundle (ADR 0003). */
+const PACKAGED_PYTHON_SOURCE = fileURLToPath(new URL('../python', import.meta.url));
+
 /**
  * Synchronous on purpose: cordis does not await a function plugin's return
  * value, so long-running preparation runs in the background under an effect.
  */
 export function apply(ctx, rawConfig) {
-  const config = resolveConfig(rawConfig, { dataDir: ctx.get('dshHomePath')?.('memory') });
+  const config = resolveConfig(rawConfig, {
+    dataDir: ctx.get('dshHomePath')?.('memory'),
+    pythonSource: PACKAGED_PYTHON_SOURCE,
+  });
   const runtime = createRuntime({ config, subprocess: ctx.subprocess, logger: ctx.logger });
   ctx.effect(() => {
     runtime.start();

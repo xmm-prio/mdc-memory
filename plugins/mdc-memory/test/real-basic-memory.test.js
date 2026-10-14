@@ -1,6 +1,7 @@
 /**
  * End-to-end: the Host plugin drives the real basic-memory source tree (the
- * repo submodule) to `ready` through dsh's own local subprocess provider.
+ * repo submodule) to `ready` through dsh's own local subprocess provider, with
+ * dsh's proxy policy installed from the environment the way the launcher does.
  *
  * Slow on first run (venv build and model download), so it is opt-in; the
  * environment variables are listed in support/real-dsh.js.
@@ -18,6 +19,14 @@ import { createFakeCtx, serveRoutes } from './support/fake-ctx.js';
 import { REAL_TEST_SKIP, realDsh, realHostConfig } from './support/real-dsh.js';
 
 const READY_TIMEOUT_MS = 15 * 60_000;
+
+/** Run a Python snippet to completion under `env`, as the Host's children run. */
+async function runPython(subprocess, python, code, { cwd, env }) {
+  const collect = { maxBytes: 64 * 1024 };
+  const handle = subprocess.spawn({ argv: [python, '-c', code], cwd, env, stdio: { stdin: 'ignore', stdout: collect, stderr: collect }, graceMs: 5000 });
+  const { exitCode } = await handle.done;
+  return { exitCode, output: handle.collected.stdout.readFrom(0).text + handle.collected.stderr.readFrom(0).text };
+}
 
 /** Command lines of live processes serving basic-memory on `port` (Windows only). */
 function serverProcesses(port) {
@@ -49,6 +58,7 @@ test('drives the real basic-memory to ready and tears it down', { skip: REAL_TES
 
   const storageRoot = mkdtempSync(join(tmpdir(), 'mdc-memory-storages-'));
   const dsh = await realDsh({ storageRoot });
+  console.log(`NO_PROXY under the dsh proxy policy: ${process.env.NO_PROXY}`);
   const fake = createFakeCtx({ subprocess: dsh.subprocess, storageDomain: dsh.storageDomain });
   apply(fake.ctx, { pythonSource, dataDir });
   const http = await serveRoutes(fake.routes);
@@ -73,6 +83,10 @@ test('drives the real basic-memory to ready and tears it down', { skip: REAL_TES
     assert.ok(main.path.replaceAll('/', '\\').toLowerCase().startsWith(dataDir.toLowerCase()), `main project lives in dataDir: ${main.path}`);
     assert.ok(existsSync(join(dataDir, 'config', 'config.json')), 'basic-memory config lives in dataDir');
     assert.deepEqual(userState.map(fingerprint), userStateBefore, "user's own basic-memory state untouched");
+
+    const model = dsh.spawned.find((spec) => spec.argv[1] === '-c');
+    const httpx = await runPython(dsh.real, model.argv[0], 'import httpx; httpx.Client(); print("httpx client ok")', { cwd: dataDir, env: model.env });
+    assert.equal(httpx.exitCode, 0, `httpx rejects the model stage environment:\n${httpx.output}`);
 
     const lanAddress = Object.values(networkInterfaces()).flat().find((entry) => entry.family === 'IPv4' && !entry.internal)?.address;
     if (lanAddress) assert.equal(await connects(lanAddress, port), false, `not reachable on ${lanAddress}`);
