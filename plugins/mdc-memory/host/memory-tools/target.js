@@ -3,6 +3,7 @@
  * from the effective knowledge bases (生效知识库), so turning a knowledge base
  * on or off applies to the very next call of every running session.
  */
+import { sameKnowledgeBaseName } from '../knowledge-base/names.js';
 import { MemoryToolError } from './errors.js';
 
 const MEMORY_URL = 'memory://';
@@ -13,10 +14,7 @@ const MEMORY_URL = 'memory://';
  * @param {ReturnType<typeof import('../basic-memory/client.js').createBasicMemoryClient>} deps.basicMemory
  */
 export function createTargetResolver({ knowledgeBases, basicMemory }) {
-  /**
-   * The requested knowledge base, or the only effective one when none is
-   * requested. Names compare regardless of case, as basic-memory's do.
-   */
+  /** The requested knowledge base, or the only effective one when none is requested. */
   async function choose(requested, effective, signal) {
     if (effective.length === 0) throw new MemoryToolError('no-knowledge-base', 'No knowledge base is enabled, so memory is unavailable.');
     const enabled = effective.map((knowledgeBase) => knowledgeBase.name).join(', ');
@@ -25,7 +23,7 @@ export function createTargetResolver({ knowledgeBases, basicMemory }) {
       throw new MemoryToolError('project-required', `Several knowledge bases are enabled; pass "project" as one of: ${enabled}.`);
     }
     const name = String(requested);
-    const sameName = (knowledgeBase) => knowledgeBase.name.toLowerCase() === name.toLowerCase();
+    const sameName = (knowledgeBase) => sameKnowledgeBaseName(knowledgeBase.name, name);
     const chosen = effective.find(sameName);
     if (chosen) return chosen;
     if ((await knowledgeBases.list(signal)).some(sameName)) {

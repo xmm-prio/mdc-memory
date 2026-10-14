@@ -6,6 +6,7 @@
 import { isAbsolute, resolve, sep } from 'node:path';
 
 import { KnowledgeBaseError } from './errors.js';
+import { sameKnowledgeBaseName } from './names.js';
 
 const WINDOWS = process.platform === 'win32';
 /** Drive-relative (`\dir`) and drive-current (`C:dir`) paths depend on the server's working directory. */
@@ -29,15 +30,12 @@ export function parseRegistration(input) {
 
 /**
  * Refuse a registration that collides with an existing basic-memory project.
- * Names collide regardless of case: basic-memory addresses projects by a
- * case-folded permalink.
  * @param {{ name: string, path: string }} registration
  * @param {readonly import('../basic-memory/client.js').Project[]} projects - every project, the default included.
  * @throws {KnowledgeBaseError} name-taken | name-reserved | path-registered | path-reserved
  */
 export function assertRegistrable(registration, projects) {
-  const name = registration.name.toLowerCase();
-  const named = projects.find((project) => project.name.toLowerCase() === name);
+  const named = projects.find((project) => sameKnowledgeBaseName(project.name, registration.name));
   if (named?.is_default) throw new KnowledgeBaseError('name-reserved', `name ${registration.name} is reserved for internal use`);
   if (named) throw new KnowledgeBaseError('name-taken', `a knowledge base named ${named.name} already exists`, { knowledgeBase: named.name });
   const overlapping = projects.find((project) => overlaps(project.path, registration.path));
