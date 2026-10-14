@@ -143,6 +143,46 @@ test('becomes ready with basic-memory on loopback, isolated inside dataDir', asy
   assert.ok(model.argv.includes(cacheDir), 'model is pre-downloaded into the cache the server reads');
 });
 
+/** Set environment variables of this process for one test. */
+function setEnv(values) {
+  const previous = Object.fromEntries(Object.keys(values).map((name) => [name, process.env[name]]));
+  const assign = (entries) => {
+    for (const [name, value] of Object.entries(entries)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  };
+  assign(values);
+  cleanups.push(() => assign(previous));
+}
+
+test('proxy bypass lists reach Python children in a form httpx can parse', async () => {
+  // What the dsh launcher leaves in the environment: its loopback entries, bare and bracketed.
+  const inherited = 'localhost,127.0.0.1,.corp.example ::1,[::1],[fe80::1],[::1]:8080,LOCALHOST,*.svc';
+  setEnv({ NO_PROXY: inherited, no_proxy: inherited });
+  const subprocess = createFakeSubprocess();
+  const { http } = await start(subprocess, { pythonSource: makeSource() });
+
+  await waitForState(http, 'ready');
+
+  for (const program of ['model', 'serve']) {
+    const { env } = subprocess.last(program).spec;
+    assert.equal(env.NO_PROXY, 'localhost,127.0.0.1,.corp.example,::1,fe80::1,*.svc', program);
+    assert.equal(env.no_proxy, env.NO_PROXY, program);
+  }
+});
+
+test('Python children get no proxy bypass list when none is inherited', async () => {
+  setEnv({ NO_PROXY: undefined, no_proxy: undefined });
+  const subprocess = createFakeSubprocess();
+  const { http } = await start(subprocess, { pythonSource: makeSource() });
+
+  await waitForState(http, 'ready');
+
+  const { env } = subprocess.last('serve').spec;
+  assert.equal(Object.keys(env).some((name) => name.toUpperCase() === 'NO_PROXY'), false);
+});
+
 test('dataDir falls back to dshHomePath("memory") when a user patch replaces the config', async () => {
   const subprocess = createFakeSubprocess();
   const dshHome = join(workdir, 'dsh-home');
