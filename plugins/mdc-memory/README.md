@@ -21,6 +21,8 @@ dsh bundle：在本机托管一个 basic-memory 进程，为 agent 提供长期�
 | `pythonSource` | bundle 内的 `python/` | basic-memory 源码目录的绝对路径，需包含 `pyproject.toml` 与 `uv.lock`；开发时指向 submodule |
 | `dataDir` | `dshHomePath('memory')`，即 `~/.dsh/memory` | 虚拟环境、模型缓存与 basic-memory 配置和索引所在目录 |
 | `python` | `python` | 用来执行 `python -m uv` 的解释器，可写 PATH 上的名字或绝对路径 |
+| `segmentation` | `jieba` | 全文检索对中文等无空格文字的切分策略：`jieba` 按词切分，`ngram` 为上游的单字加双字片段 |
+| `segmentationUserDict` | 无 | jieba 用户词典的绝对路径（UTF-8，每行 `词语 [词频] [词性]`），其中的术语作为整词切分；仅 `jieba` 策略使用 |
 
 profile 的 `cordis.patch.yml` 中覆盖配置会整体替换 `config`，未写的字段使用上表默认值。开发时把 `pythonSource` 指向 submodule：
 
@@ -43,6 +45,8 @@ profile 的 `cordis.patch.yml` 中覆盖配置会整体替换 `config`，未写�
 4. `server`：在 `127.0.0.1` 的空闲端口上启动 `basic-memory serve`，`/v2/projects/` 返回 200 即就绪。
 
 basic-memory 的配置与索引位于 `<dataDir>/config`，默认项目位于 `<dataDir>/main`，不会读写用户自己的 `~/.basic-memory`。插件卸载或 dsh 关闭时终止整个进程树。
+
+中文切分策略通过环境变量 `BASIC_MEMORY_SCRIPT_SEGMENTATION`（取自 `segmentation`）和 `BASIC_MEMORY_SCRIPT_SEGMENTATION_USER_DICT`（取自 `segmentationUserDict`）传给 basic-memory，建索引与查询使用同一策略。basic-memory 在索引库中记录生成全文索引所用的策略（含 jieba 版本与用户词典内容的哈希），启动时发现不一致就原地重算全文索引中的中文切分列，不重读笔记文件，也不重新计算 embedding。用户词典不存在时 basic-memory 启动失败，状态区显示错误。
 
 传给 Python 子进程的 `NO_PROXY` / `no_proxy` 会改写成 httpx 能解析的形式：dsh 追加的 `[::1]` 这类带方括号的 IPv6 地址改为裸地址，无法改写的条目（如 `[::1]:8080`）丢弃，其余条目按原顺序去重保留。
 

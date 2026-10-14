@@ -51,7 +51,7 @@ function createOutputTail() {
  * @param {object} deps.logger - the plugin logger.
  */
 export function createRuntime({ config, subprocess, logger }) {
-  const environment = createEnvironment(config.dataDir);
+  const environment = createEnvironment(config);
   const status = createStatus(STAGES.map((stage) => stage.id));
   let attempt;
 
