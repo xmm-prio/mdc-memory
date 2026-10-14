@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
+import { knowledgeBaseRoutes } from './support/knowledge-bases.js';
 import { REAL_TEST_SKIP, realHostConfig } from './support/real-dsh.js';
 import { READY_TIMEOUT_MS, startRealHost, unregisterLeftoverProjects, until } from './support/real-host.js';
 
@@ -28,22 +29,7 @@ const MEMORY_SECTION = /^## Memory$/m;
 let workdir;
 let host;
 
-const add = async (name) => {
-  const added = await host.http.request('POST', '/mdc-memory/kbs/add', { body: { name, path: join(workdir, 'kbs', name) } });
-  assert.equal(added.status, 200, JSON.stringify(added.body));
-};
-const setEnabled = async (name, enabled) => {
-  const set = await host.http.request('POST', '/mdc-memory/kbs/set-enabled', { body: { name, enabled } });
-  assert.equal(set.status, 200, JSON.stringify(set.body));
-};
-
-/** Through the settings routes: exactly `names` are enabled, adding the missing ones. */
-async function useKnowledgeBases(...names) {
-  const { items } = (await host.http.request('GET', '/mdc-memory/kbs')).body;
-  for (const name of names) if (!items.some((item) => item.name === name)) await add(name);
-  for (const item of items) await setEnabled(item.name, names.includes(item.name));
-  for (const name of names) await setEnabled(name, true);
-}
+const { add, setEnabled, useKnowledgeBases } = knowledgeBaseRoutes(() => host.http, (name) => join(workdir, 'kbs', name));
 
 /** Wait until the agent is offered memory tools; returns their names. */
 const offeredMemory = (agent) => until(async () => {
