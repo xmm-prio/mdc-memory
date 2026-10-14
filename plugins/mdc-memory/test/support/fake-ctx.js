@@ -1,10 +1,12 @@
 /**
  * Minimal stand-in for the dsh plugin context handed to `apply(ctx, config)`.
- * It records effects, routes and logs, and lets a test dispose the plugin the
- * way cordis would when the row is unloaded.
+ * It records effects, routes and logs, provides the agent plane (see
+ * fake-agents.js), and lets a test dispose the plugin the way cordis would
+ * when the row is unloaded.
  */
 import http from 'node:http';
 
+import { createFakeAgentPlane, disposerOf } from './fake-agents.js';
 import { createFakeStorageDomain } from './fake-storage-domain.js';
 
 export const AUTH_HEADER = 'x-test-auth';
@@ -17,6 +19,7 @@ export const AUTH_HEADER = 'x-test-auth';
  */
 export function createFakeCtx(rootServices, { web = true } = {}) {
   const services = { storageDomain: createFakeStorageDomain(), ...rootServices };
+  const agents = createFakeAgentPlane();
   const disposers = [];
   const routes = new Map();
   const logs = [];
@@ -28,12 +31,15 @@ export function createFakeCtx(rootServices, { web = true } = {}) {
     get: (name) => services[name],
     /** Like cordis, an effect may resolve its disposer asynchronously. */
     effect(execute) {
-      const result = execute();
-      const dispose = typeof result?.then === 'function'
-        ? async () => { const resolved = await result; if (typeof resolved === 'function') await resolved(); }
-        : result;
+      const dispose = disposerOf(execute());
       disposers.push(dispose);
       return dispose;
+    },
+    /** Plugin-level listener; removed when the plugin is disposed. */
+    on(name, listener) {
+      const off = disposerOf(agents.on(name, listener));
+      disposers.push(off);
+      return off;
     },
   };
   const webServices = {
@@ -51,7 +57,7 @@ export function createFakeCtx(rootServices, { web = true } = {}) {
   const ctx = {
     ...base,
     inject(deps, callback) {
-      const provided = web ? { ...services, ...webServices } : services;
+      const provided = { ...services, ...agents.services, ...(web ? webServices : {}) };
       if (deps.every((dep) => dep in provided)) callback({ ...base, ...provided });
     },
   };
@@ -60,6 +66,9 @@ export function createFakeCtx(rootServices, { web = true } = {}) {
     ctx,
     routes,
     logs,
+    /** The agent plane: create/dispose agents and send user messages through the pre-step. */
+    agents,
+    waterfall: agents.waterfall,
     /** Run every effect disposer in reverse order, as plugin unload does. */
     async dispose() {
       for (const dispose of disposers.reverse()) if (typeof dispose === 'function') await dispose();
