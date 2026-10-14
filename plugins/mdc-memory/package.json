@@ -1,0 +1,36 @@
+{
+  "name": "@local/mdc-memory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Long-term memory for DeepSeek Harness agents, backed by a managed basic-memory process.",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./host": "./host/index.js",
+    "./client": "./client/index.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "host/",
+    "client/",
+    "locale/*.json",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  }
+}
