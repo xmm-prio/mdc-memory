@@ -6,6 +6,7 @@ import { createEnvironment } from './environment.js';
 import { describeOutcome, ProcessGroup } from './process-group.js';
 import { modelStage } from './stages/model.js';
 import { serverStage } from './stages/server.js';
+import { sourceStage } from './stages/source.js';
 import { venvStage } from './stages/venv.js';
 import { createStatus } from './status.js';
 
@@ -14,6 +15,7 @@ import { createStatus } from './status.js';
  * @property {import('../config.js').HostConfig} config
  * @property {ReturnType<typeof createEnvironment>} environment
  * @property {ProcessGroup} processes - the attempt's processes; closed on failure, retry or stop.
+ * @property {Readonly<Record<string, any>>} facts - facts resolved by the earlier stages of the attempt.
  * @property {(line: string) => void} log - progress and output line of the stage.
  */
 
@@ -25,7 +27,7 @@ import { createStatus } from './status.js';
  */
 
 /** @type {readonly Stage[]} */
-const STAGES = [venvStage, modelStage, serverStage];
+const STAGES = [sourceStage, venvStage, modelStage, serverStage];
 
 const OUTPUT_TAIL_LINES = 30;
 const OUTPUT_LINE_CHARS = 500;
@@ -67,7 +69,7 @@ export function createRuntime({ config, subprocess, logger }) {
       status.enter(stage.id);
       logger.info(`mdc-memory: stage ${stage.id} started`);
       try {
-        Object.assign(facts, await stage.run({ config, environment, processes, log }));
+        Object.assign(facts, await stage.run({ config, environment, processes, facts: { ...facts }, log }));
       } catch (error) {
         await fail(processes, stage.id, error instanceof Error ? error.message : String(error), output);
         return;
