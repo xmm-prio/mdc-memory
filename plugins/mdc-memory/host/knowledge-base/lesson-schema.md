@@ -19,7 +19,7 @@ settings:
 
 # lesson
 
-经验笔记（`type: lesson`）的结构定义，由 mdc-memory 在添加知识库时生成。文件已存在时不会被覆盖，可以按需修改。
+经验笔记（`type: lesson`）的结构定义，由 mdc-memory 在添加知识库时生成；知识库中已有经验的 schema 笔记时不会生成，已有的文件也不会被覆盖。可以按需修改。
 
 - 必填观察：`[symptom]` 现象（可多条，写报错原文）、`[cause]` 根因、`[fix]` 解决方法（可多条）
 - 可选观察：`[condition]` 适用条件（可多条）

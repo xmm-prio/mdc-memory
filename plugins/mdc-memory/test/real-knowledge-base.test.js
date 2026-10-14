@@ -64,6 +64,9 @@ async function projectNamed(name) {
   return project;
 }
 
+/** basic-memory's own resolution of the schema for lesson notes, from its index. */
+const lessonSchemaDrift = (project) => basicMemory(`/v2/projects/${project.external_id}/schema/diff/lesson`);
+
 /** basic-memory serves search on the HTTP method QUERY only. */
 function searchNotes(externalId, text) {
   const payload = Buffer.from(JSON.stringify({ text }), 'utf8');
@@ -145,6 +148,7 @@ describe('knowledge bases on a real basic-memory', { skip: REAL_TEST_SKIP, timeo
     assert.equal(added.status, 200, `${JSON.stringify(added.body)}`);
     assert.ok(existsSync(join(root, 'schema', 'lesson.md')), 'schema note written into the knowledge base');
     const project = await projectNamed('schema-check');
+    assert.equal((await lessonSchemaDrift(project)).schema_found, true, 'the seeded note is indexed by the time add returns');
     const report = await until(async () => {
       const validated = await basicMemory(`/v2/projects/${project.external_id}/schema/validate?note_type=lesson`, { method: 'POST' });
       return validated.results.length === 1 && validated;
@@ -174,6 +178,18 @@ describe('knowledge bases on a real basic-memory', { skip: REAL_TEST_SKIP, timeo
     assert.match(kept, /version: 7/);
     assert.match(kept, /用户自己维护的 schema。/);
     assert.doesNotMatch(kept, /mdc-memory/);
+  });
+
+  test('a lesson schema note anywhere in the directory means none is seeded', async () => {
+    const root = join(workdir, 'kbs', 'schema-elsewhere');
+    const own = ['---', 'title: 经验结构', 'type: schema', 'entity: Lesson', 'version: 3', 'schema:', '  symptom: string, 现象', '---', '', '团队维护的经验 schema。', ''].join('\n');
+    writeNote(root, 'schemas/经验结构.md', own);
+
+    const added = await host.http.request('POST', '/mdc-memory/kbs/add', { body: { name: 'schema-elsewhere', path: root } });
+
+    assert.equal(added.status, 200, `${JSON.stringify(added.body)}`);
+    assert.equal(existsSync(join(root, 'schema', 'lesson.md')), false, 'no second lesson schema note');
+    assert.equal((await lessonSchemaDrift(await projectNamed('schema-elsewhere'))).schema_found, true);
   });
 
   test('notes already in the directory become searchable after adding it', async () => {

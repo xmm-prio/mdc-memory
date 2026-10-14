@@ -57,13 +57,15 @@ export function createKnowledgeBases({ basicMemory, enablement, logger }) {
   }
 
   /**
-   * Make a just-registered project usable. A failure unregisters it again so
-   * an add either fully happens or leaves nothing behind (files stay on disk).
+   * Make a just-registered project usable: index the files already in its
+   * directory, seed the lesson schema note unless the index has one and index
+   * that too, then enable it. A failure unregisters the project again so an
+   * add either fully happens or leaves nothing behind (files stay on disk).
    */
   async function provision(project, root) {
     try {
-      await seedLessonSchema(root);
       await basicMemory.indexProject(project.external_id);
+      if (await seedLessonSchema(basicMemory, project.external_id, root)) await basicMemory.indexProject(project.external_id);
       await enablement.set(project.name, true);
     } catch (error) {
       await basicMemory.removeProject(project.external_id).catch((rollback) => {
@@ -76,9 +78,9 @@ export function createKnowledgeBases({ basicMemory, enablement, logger }) {
   return {
     list,
     /**
-     * Register a new knowledge base: basic-memory creates a missing directory,
-     * the lesson schema note is seeded, the files in the directory are
-     * indexed in the background, and the knowledge base starts enabled.
+     * Register a new knowledge base: basic-memory creates a missing directory
+     * and indexes the files in it, the lesson schema note is seeded unless the
+     * index already has one, and the knowledge base starts enabled.
      * @param {{ name: string, path: string }} input
      * @returns {Promise<KnowledgeBase>}
      * @throws {KnowledgeBaseError} on input, name or path conflicts, or when basic-memory refuses.

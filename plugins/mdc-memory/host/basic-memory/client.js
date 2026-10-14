@@ -10,6 +10,8 @@ import http from 'node:http';
 const REQUEST_TIMEOUT_MS = 30_000;
 /** A tool call may embed notes or load the embedding model on first use. */
 const TOOL_CALL_TIMEOUT_MS = 120_000;
+/** Indexing a directory embeds every note in it; the answer comes only when it is done. */
+const INDEX_TIMEOUT_MS = 10 * 60_000;
 const MCP_PATH = '/mcp';
 const MCP_ACCEPT = 'application/json, text/event-stream';
 // A private agent keeps loopback requests off any proxy configured on the global agent.
@@ -186,12 +188,24 @@ export function createBasicMemoryClient(runtime) {
       await send('DELETE', `/v2/projects/${encodeURIComponent(externalId)}`, { query: { delete_notes: 'false' } });
     },
     /**
-     * Schedule indexing of the files already in a project's directory and
-     * return without waiting for it.
+     * Index the files in a project's directory, embeddings included, and
+     * return once it is done. Files already indexed and unchanged are skipped.
      * @param {string} externalId
      */
     async indexProject(externalId) {
-      await send('POST', `/v2/projects/${encodeURIComponent(externalId)}/index`, { query: { run_in_background: 'true' } });
+      await send('POST', `/v2/projects/${encodeURIComponent(externalId)}/index`, { query: { run_in_background: 'false' }, timeoutMs: INDEX_TIMEOUT_MS });
+    },
+    /**
+     * Whether basic-memory resolves a schema for notes of a type from the
+     * project's index: a note of `type: schema` whose `entity` names the
+     * type, wherever it lives in the project.
+     * @param {string} externalId
+     * @param {string} noteType
+     * @returns {Promise<boolean>}
+     */
+    async hasSchemaFor(externalId, noteType) {
+      const drift = await send('GET', `/v2/projects/${encodeURIComponent(externalId)}/schema/diff/${encodeURIComponent(noteType)}`);
+      return drift.schema_found;
     },
     /**
      * Search several projects in one ranking. basic-memory serves search on
